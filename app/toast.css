@@ -52,10 +52,7 @@ html, body {
   #pill.timed .prog { animation: none; }
 }
 
-/* 按模式上色：AI = 金，离线 = 冷蓝（跟设置里的分段控件一致） */
+/* 提示条配色 */
 #pill[data-tone="ai"] .toast-text { color: var(--gold-1); }
 #pill[data-tone="ai"] .prog { background: linear-gradient(90deg, rgba(246,207,131,.95), rgba(246,207,131,.35)); }
 
-#pill[data-tone="offline"] .toast-text { color: #cfe2f8; }
-#pill[data-tone="offline"] .prog { background: linear-gradient(90deg, rgba(152,186,226,.95), rgba(152,186,226,.3)); }
-#pill[data-tone="offline"] .toast-star { color: #9dc0e8; }

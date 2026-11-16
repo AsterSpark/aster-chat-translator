@@ -63,9 +63,47 @@ COMMON = {
     "up": "", "next": "下一个", "again": "再来一次", "much": "多少",
 }
 
+# 聊天里最常见的普通词（术语表没有的），补上能显著减少"半英半中"
+EXTRA_COMMON = {
+    "think": "觉得", "thought": "想", "know": "知道", "knew": "知道",
+    "most": "大多数", "more": "更多", "less": "更少", "much": "多少",
+    "many": "很多", "lot": "很多", "lots": "很多", "bit": "一点", "little": "一点",
+    "game": "游戏", "games": "游戏", "play": "玩", "played": "玩了",
+    "playing": "在玩", "players": "玩家", "player": "玩家",
+    "pretty": "挺", "fun": "好玩", "funny": "搞笑", "when": "当",
+    "dont": "别", "don't": "别", "doesnt": "不", "doesn't": "不",
+    "didnt": "没", "didn't": "没", "cant": "不能", "can't": "不能",
+    "wont": "不会", "won't": "不会", "im": "我", "ive": "我",
+    "go": "去", "goes": "去", "going": "要", "went": "去了", "gone": "走了",
+    "about": "关于", "part": "部分", "lol": "哈哈", "tbh": "说实话",
+    "imo": "我觉得", "actually": "其实", "really": "真的", "even": "甚至",
+    "things": "东西", "thing": "东西", "stuff": "东西",
+    "people": "人", "anyone": "有人", "somebody": "有人", "nobody": "没人",
+    "server": "服务器", "realm": "服务器", "lvl": "等级",
+    "get": "拿", "got": "拿到", "give": "给", "take": "拿",
+    "make": "做", "made": "做了", "use": "用", "used": "用了",
+    "work": "工作", "works": "有效", "come": "来", "coming": "来",
+    "kill": "杀", "killed": "杀了", "die": "死", "died": "死了", "dead": "死了",
+    "sell": "卖", "buy": "买", "try": "试", "help": "帮忙", "wait": "等",
+    "start": "开始", "stop": "停", "finish": "完成", "done": "完成",
+    "sorry": "抱歉", "please": "请", "pls": "请", "plz": "请",
+    "maybe": "也许", "right": "对", "yeah": "对", "yep": "对", "nope": "不",
+    "love": "喜欢", "like": "喜欢", "hate": "讨厌", "better": "更好",
+    "best": "最好", "worse": "更差", "worst": "最差",
+    "always": "总是", "never": "从不", "sometimes": "有时",
+    "today": "今天", "tomorrow": "明天", "yesterday": "昨天",
+    "night": "晚上", "morning": "早上", "day": "天", "week": "周",
+    "hour": "小时", "minute": "分钟", "mins": "分钟",
+    "first aid": "急救", "firstaid": "急救",
+    "tyvm": "谢谢", "goat": "最强", "ggs": "打得好",
+    # 上游词表里 whisper 的数据坏了（会输出"密密密密密密"）
+    "whisper": "密语", "whisper me": "密我",
+}
+
 TERMS = dict(_UPSTREAM)
 TERMS.update(OVERRIDES)
 TERMS.update(COMMON)
+TERMS.update(EXTRA_COMMON)
 
 # 注意：不能用 \b —— 中文字符在 Python 里也算 \w，"个tank" 的 \b 不成立，
 # 会导致紧挨中文的术语替换不上。改用「前后不是英文字母」判断。
@@ -125,12 +163,30 @@ _PHRASES = [
 _PHRASE_RULES = [(re.compile(p, re.IGNORECASE), r) for p, r in _PHRASES]
 
 
-def local_translate(text):
-    """把一句英文尽量变成中文：去频道前缀 → 套句式模板 → 替换术语"""
+_URL_RE = re.compile(r"(?:https?://|www\.)[^\s，。；、]+|"
+                    r"[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/[^\s，。；、]*")
+
+
+def local_translate(text, strip_channel=True):
+    """把一句英文尽量变成中文：去频道前缀 → 套句式模板 → 替换术语
+
+    strip_channel=False 用于"正文已经拆出来"的场景：正文开头的 [First Aid]
+    是技能名，不是频道，删掉就漏翻了。
+    """
     s = (text or "").strip()
     if not s:
         return ""
-    s = _CHANNEL_RE.sub("", s).strip()
+    if strip_channel:
+        s = _CHANNEL_RE.sub("", s).strip()
+
+    # 网址原样保留：逐词替换会把 .../help/article/... 里的 help 翻成"帮忙"
+    urls = []
+
+    def _keep_url(m):
+        urls.append(m.group(0))
+        return "\u0000%d\u0000" % (len(urls) - 1)
+
+    s = _URL_RE.sub(_keep_url, s)
 
     for rx, rep in _PHRASE_RULES:
         s = rx.sub(rep, s)
@@ -147,6 +203,9 @@ def local_translate(text):
     # 中文之间不留空格
     s = re.sub(r"(?<=[\u4e00-\u9fff])[ \t]+(?=[\u4e00-\u9fff])", "", s)
     s = re.sub(r"[ \t]+(?=[，。？！、：；])", "", s)
+
+    for i, u in enumerate(urls):
+        s = s.replace("\u0000%d\u0000" % i, u)
     return s
 
 

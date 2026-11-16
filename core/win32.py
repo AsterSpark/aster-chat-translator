@@ -47,6 +47,8 @@ user32.TranslateMessage.argtypes = [ctypes.POINTER(wt.MSG)]
 user32.DispatchMessageW.argtypes = [ctypes.POINTER(wt.MSG)]
 user32.GetForegroundWindow.restype = wt.HWND
 user32.GetWindowThreadProcessId.argtypes = [wt.HWND, ctypes.POINTER(wt.DWORD)]
+kernel32.GetCurrentThreadId.restype = wt.DWORD
+user32.PostThreadMessageW.argtypes = [wt.DWORD, wt.UINT, wt.WPARAM, wt.LPARAM]
 kernel32.CreateToolhelp32Snapshot.argtypes = [wt.DWORD, wt.DWORD]
 kernel32.CreateToolhelp32Snapshot.restype = wt.HANDLE
 kernel32.Process32FirstW.argtypes = [wt.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
@@ -95,6 +97,7 @@ class Hotkey:
         self.vk = int(vk)
         self.callback = callback
         self._thread = None
+        self._thread_id = 0
         self._hook = None
         self._proc = None
         self._ready = threading.Event()
@@ -118,6 +121,7 @@ class Hotkey:
                 pass
             return user32.CallNextHookEx(None, n_code, w_param, l_param)
 
+        self._thread_id = kernel32.GetCurrentThreadId()
         self._proc = HOOKPROC(_proc)
         self._hook = user32.SetWindowsHookExW(WH_KEYBOARD_LL, self._proc, None, 0)
         self._ready.set()
@@ -132,9 +136,13 @@ class Hotkey:
             user32.DispatchMessageW(ctypes.byref(msg))
 
     def stop(self):
+        """卸钩子并让钩子线程的 GetMessage 循环退出（否则每次重绑都漏一个线程）"""
         if self._hook:
             user32.UnhookWindowsHookEx(self._hook)
             self._hook = None
+        if self._thread_id:
+            user32.PostThreadMessageW(self._thread_id, WM_QUIT, 0, 0)
+            self._thread_id = 0
 
 
 VK_MAP = {

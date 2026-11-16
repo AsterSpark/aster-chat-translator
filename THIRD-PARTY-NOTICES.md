@@ -2,34 +2,24 @@
 
 本项目自身代码以 MIT 许可发布（见 [LICENSE](LICENSE)）。以下为分发时依法必须保留的第三方声明。
 
-## 词表
-
-`core/terms_data.py`（1124 条游戏术语）由以下两份 **MIT** 词表合并生成：
-
-| 来源 | 条目 | 版权声明 |
-|---|---|---|
-| [Yumash/BabelChat](https://github.com/Yumash/BabelChat) | 436 | Copyright (c) 2025-2026 Andrey Yumashev / Pirson (WoW dictionary data) |
-| [paokkerkir/wow-translate](https://github.com/paokkerkir/wow-translate) | 500+ | Copyright (c) 2026 WoWTranslate Team |
-
-## 离线模型
-
-| 模型 | 许可 | 说明 |
-|---|---|---|
-| `m2m100_418M`（Facebook/Meta） | MIT | CTranslate2 int8 转换版，随程序分发，未修改权重 |
-
 ## Python 依赖
 
 | 包 | 许可 |
 |---|---|
-| ctranslate2 | MIT |
-| sentencepiece | Apache-2.0 |
-| tokenizers | Apache-2.0 |
-| transformers | Apache-2.0 |
-| torch | BSD-3-Clause |
 | websockets | BSD-3-Clause |
 | Pillow | HPND |
 | winocr | MIT |
-| numpy | BSD-3-Clause |
+
+## 内置词表（本地词库模式）
+
+`core/terms_data.py`（约 1100 条游戏术语）由以下两份 **MIT** 词表合并生成：
+
+| 来源 | 许可 |
+|---|---|
+| BabelChat / WoW 词典数据（Andrey Yumashev / Pirson） | MIT |
+| wow-translate 词表（WoWTranslate Team） | MIT |
+
+词表只做逐词对照，随程序分发；本项目未修改其许可条款，原始版权声明见附录 A。
 
 ## Rust 依赖
 
@@ -41,10 +31,7 @@
 
 完整依赖树见 `Cargo.lock`。
 
-
 ## 附录 A：MIT License
-
-适用于本项目代码，以及上文的 BabelChat、wow-translate 词表与 m2m100 模型。
 
 ```
 MIT License
@@ -52,7 +39,6 @@ MIT License
 Copyright (c) 2026 Aster
 Copyright (c) 2025-2026 Andrey Yumashev / Pirson (WoW dictionary data)
 Copyright (c) 2026 WoWTranslate Team
-Copyright (c) Meta Platforms, Inc. and affiliates (m2m100)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -74,8 +60,6 @@ SOFTWARE.
 ```
 
 ## 附录 B：Apache License 2.0
-
-适用于 sentencepiece、tokenizers、transformers。
 
 ```
                                  Apache License

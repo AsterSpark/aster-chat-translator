@@ -3,8 +3,13 @@
  * 原来 API、WS_URL、$、invoke 在每个页面里各抄一份（端点字面量最多 10 处），
  * 改端口要满仓库改。这个文件必须在各页面自己的脚本之前加载。
  */
-const API = "http://127.0.0.1:17650";
-const WS_URL = "ws://127.0.0.1:17651";
+/* 端点：外壳里页面跑在 tauri.localhost，走固定端口；
+   浏览器里调试时按当前地址推导（HTTP 端口 +1 就是 WS），只改 WOWTR_PORT 也能对上。 */
+const _viaHttp = (location.hostname === "127.0.0.1" || location.hostname === "localhost");
+const API = _viaHttp ? location.origin : "http://127.0.0.1:17650";
+const WS_URL = _viaHttp
+  ? `ws://${location.hostname}:${Number(location.port || 17650) + 1}`
+  : "ws://127.0.0.1:17651";
 
 const $ = (id) => document.getElementById(id);
 

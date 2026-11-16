@@ -139,8 +139,19 @@ $("btnOpen").addEventListener("click", async () => {
 });
 
 $("btnCopy").addEventListener("click", () => {
-  const t = allRows.map((r) => (r.t ? `[${r.t}] ` : "") + r.m).join("\n");
-  if (navigator.clipboard) navigator.clipboard.writeText(t).catch(() => {});
+  // 复制"当前看到的那部分"（搜索/筛选后的），而不是全量日志
+  const rows = (typeof shown !== "undefined" && shown && shown.length) ? shown : allRows;
+  const t = rows.map((r) => (r.t ? `[${r.t}] ` : "") + r.m).join("\n");
+  const flash = () => { $("btnCopy").textContent = "已复制"; setTimeout(() => { $("btnCopy").textContent = "复制"; }, 1200); };
+  if (navigator.clipboard && window.isSecureContext) {
+    navigator.clipboard.writeText(t).then(flash).catch(() => {
+      const ta = document.createElement("textarea");
+      ta.value = t; ta.style.position = "fixed"; ta.style.opacity = "0";
+      document.body.appendChild(ta); ta.select();
+      try { document.execCommand("copy"); flash(); } catch (e) {}
+      document.body.removeChild(ta);
+    });
+  }
 });
 
 $("btnClose").addEventListener("click", () => {
@@ -153,38 +164,25 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") $("btnClose").click();
 });
 
+/* 无边框窗口要自己实现拖动：按住标题栏（不按按钮）就交给外壳去拖 */
+document.querySelector("#logs .bar").addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  if (e.target.closest("button, a, input, select")) return;
+  if (window.__TAURI_INTERNALS__) {
+    window.__TAURI_INTERNALS__.invoke("start_drag").catch(() => {});
+  }
+});
+
 start();
 
 /* 窗口按设计尺寸对齐（Tauri 的 scale 和 WebView2 的 dpr 会不一致，必须自己报）
    尺寸要乘界面缩放，否则 120% 时内容会被窗口裁掉。 */
-let logsScale = 1;
-function fitLogs() {
-  if (!window.__TAURI_INTERNALS__) return;
-  window.__TAURI_INTERNALS__.invoke("fit_window", {
-    width: 560 * logsScale, height: 560 * logsScale,
-    dpr: window.devicePixelRatio || 1,
-  });
-}
-fitLogs();
-window.addEventListener("load", () => { fitLogs(); setTimeout(fitLogs, 150); });
-
-/* ---------- 顶栏拖动 ---------- */
-document.querySelectorAll(".bar").forEach((bar) => {
-  bar.addEventListener("mousedown", (e) => {
-    if (e.button !== 0) return;
-    if (e.target.closest("button")) return;
-    if (window.__TAURI_INTERNALS__) window.__TAURI_INTERNALS__.invoke("start_drag");
-  });
-});
-
+/* 窗口尺寸交给用户拖：日志窗是可缩放窗口，以前每次换缩放都强制设回 560×560，
+   用户拖大/拖小会被立刻打回去。这里只保留缩放（视觉 zoom），尺寸随窗口。 */
 /* ---------- 跟随全局缩放 ---------- */
 function applyScale(scale) {
   const s0 = Math.min(1.5, Math.max(0.8, Number(scale) || 1));
   document.documentElement.style.zoom = s0;
-  if (s0 !== logsScale) {
-    logsScale = s0;
-    fitLogs();
-  }
 }
 
 function watchSettings() {

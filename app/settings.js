@@ -7,6 +7,8 @@
 
 
 let scaleNow = 1;
+let engineNow = "ai";   // "ai" / "local"
+let engineTouched = false;   // 用户这次有没有手动切过模式
 
 const KEY_LABEL = {
   num_add: "小键盘 +", num_sub: "小键盘 −", num_mul: "小键盘 *", num_div: "小键盘 /",
@@ -27,7 +29,7 @@ for (let i = 1; i <= 12; i++) CODE_MAP["F" + i] = "f" + i;
 
 const FONT_CANDIDATES = [
   "Noto Sans SC", "Noto Sans SC Medium", "Microsoft YaHei UI", "Microsoft YaHei",
-  "微软雅黑", "猫啃什锦黑", "等线", "黑体", "SimHei", "Segoe UI", "Cascadia Mono",
+  "微软雅黑", "等线", "黑体", "SimHei", "Segoe UI", "Cascadia Mono",
 ];
 
 const EYE_OPEN = '<svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"><path d="M1.1 7S3.3 3.5 7 3.5 12.9 7 12.9 7 10.7 10.5 7 10.5 1.1 7 1.1 7z"/><circle cx="7" cy="7" r="1.6"/></svg>';
@@ -54,6 +56,12 @@ function fontAvailable(name) {
 function fillFonts(current) {
   const sel = $("fontSel");
   sel.innerHTML = "";
+  // 第一项是"系统默认"（空值）：以前没有这一项，清空字体后界面回不去默认
+  const def = document.createElement("option");
+  def.value = "";
+  def.textContent = "系统默认";
+  sel.appendChild(def);
+
   const list = FONT_CANDIDATES.filter(fontAvailable);
   if (current && !list.includes(current)) list.unshift(current);
   for (const name of list) {
@@ -62,7 +70,7 @@ function fillFonts(current) {
     o.textContent = name;
     sel.appendChild(o);
   }
-  sel.value = current || list[0] || "";
+  sel.value = current || "";
 }
 
 /* 显示值 ↔ 实际缩放（旧映射，别"修"） */
@@ -95,27 +103,25 @@ function bumpScale(delta) {
     : `界面缩放 ${shown}（实际 ${Math.round(scaleNow * 100)}%）`);
 }
 
-/* 引擎双态：离线词库 / AI 模型（内部仍用 chkAI 表达"是否离线"） */
-function paintSeg(offline) {
-  $("chkAI").checked = !!offline;
-  document.querySelectorAll("#engSeg button").forEach((b) => {
-    const isOff = b.dataset.eng === "offline";
-    b.classList.toggle("on", isOff === !!offline);
-  });
-}
-
-function isOffline() {
-  return $("chkAI").checked;
+/* 后端提示"还没框选聊天区域"：把「重新框选」按钮标红并滚进视野。
+   注意：这个函数被 WS 消息处理调用，函数体一旦缺失，整条 settings 消息都会抛
+   ReferenceError，apply(cfg) 也就跟着不执行（设置页会整页空白）。 */
+function markCaptureHint() {
+  try {
+    const btn = $("btnPickArea");
+    if (!btn) return;
+    btn.classList.add("bad");
+    try { btn.scrollIntoView({ block: "center", behavior: "smooth" }); } catch (e) {}
+    setStatus("还没框选聊天区域：点「重新框选」框住游戏聊天框", "err");
+    setTimeout(() => btn.classList.remove("bad"), 8000);
+  } catch (e) {
+    console.warn("[hint]", e);
+  }
 }
 
 /* ---------------- 渲染 ---------------- */
-// 字体是否处于「系统默认」：ui_font 为空时下拉框会显示第一个可用字体，
-// 但保存时要写回空串，否则"恢复默认到系统字体"就变成"选了列表第一个"。
-let fontIsSystemDefault = false;
-
 function apply(c) {
   cfg = JSON.parse(JSON.stringify(c));
-  fontIsSystemDefault = !cfg.ui_font;
   fillFonts(cfg.ui_font || "");
 
   scaleNow = Number(cfg.ui_scale) || 1;
@@ -126,11 +132,10 @@ function apply(c) {
   const hk = cfg.hotkey || {};
   $("chkGame").checked = cfg.require_game !== false;
 
-  // 引擎：auto 时按有没有 Key 决定初始状态
+  engineNow = cfg.engine === "local" ? "local" : "ai";
+  paintEngine();
+
   const apiCfg = cfg.api || {};
-  const wantOffline = cfg.engine === "offline" ||
-    (cfg.engine !== "ai" && !apiCfg.key_set);
-  paintSeg(!!wantOffline);
 
   $("keyTranslate").textContent = KEY_LABEL[hk.translate_key] || hk.translate_key || "未设置";
   $("keyLast").textContent = KEY_LABEL[hk.last_key] || hk.last_key || "未设置";
@@ -139,38 +144,54 @@ function apply(c) {
   if (typeof apiCfg.key_value === "string") {
     keyInput.value = apiCfg.key_value;
     keyInput.dataset.original = apiCfg.key_value;
+  } else if (!apiCfg.key_set) {
+    keyInput.value = "";
+    keyInput.dataset.original = "";
   }
   keyInput.type = "password";
   $("eyeKey").innerHTML = EYE_SHUT;
   keyInput.placeholder = apiCfg.key_set ? "已配置，留空不修改" : "未配置，粘贴 Key 后保存";
 }
 
-/* ---------------- 交互：引擎 / 滑杆 / 眼睛 ---------------- */
+function paintEngine() {
+  document.querySelectorAll("#engineSeg button").forEach((b) => {
+    b.classList.toggle("on", b.dataset.eng === engineNow);
+  });
+}
+
+/* ---------------- 交互：模式 / 滑杆 / 眼睛 ---------------- */
 // 有未保存的改动时，忽略后端广播：保存设置、框选区域都会广播 settings，
 // 一冲就会把用户正在改的东西（引擎/缩放/Key）静默抹回旧值。
 let formDirty = false;
 function markDirty() { formDirty = true; }
 
-document.querySelectorAll("#engSeg button").forEach((b) => {
-  b.addEventListener("click", () => {
-    paintSeg(b.dataset.eng === "offline");
-    markDirty();
-    setStatus("引擎已切换，点保存生效");
-  });
-});
-
 $("scMinus").addEventListener("click", () => bumpScale(-SC_STEP));
 $("scPlus").addEventListener("click", () => bumpScale(SC_STEP));
 
-$("apiKey").addEventListener("input", markDirty);
+$("apiKey").addEventListener("input", () => {
+  $("apiKey").classList.remove("bad");   // 一开始打字就把标红去掉
+  if (cfg) cfg._clearKey = false;        // 点过「清除」又粘了新 Key：以新输入为准
+  markDirty();
+});
 
 $("chkGame").addEventListener("change", markDirty);
 
-// 用户自己挑字体 = 不再是"系统默认"
-$("fontSel").addEventListener("change", () => {
-  fontIsSystemDefault = false;
+$("engineSeg").addEventListener("click", (e) => {
+  const btn = e.target.closest("button[data-eng]");
+  if (!btn) return;
+  const next = btn.dataset.eng === "local" ? "local" : "ai";
+  if (next === engineNow) return;
+  engineNow = next;
+  engineTouched = true;
+  paintEngine();
   markDirty();
+  setStatus(next === "local"
+    ? "已选「本地词库」：不联网、只用词库，只能看大概意思（保存后生效）"
+    : "已选「AI 模型」：截图会发到你配置的接口（保存后生效）", "");
 });
+
+// 用户自己挑字体 = 不再是"系统默认"
+$("fontSel").addEventListener("change", markDirty);
 
 $("eyeKey").addEventListener("click", () => {
   const el = $("apiKey");
@@ -184,7 +205,7 @@ $("eyeKey").addEventListener("click", () => {
 
 $("clearKey").addEventListener("click", () => {
   $("apiKey").value = "";
-  cfg._clearKey = true;
+  if (cfg) cfg._clearKey = true;
   markDirty();
   setStatus("保存后清除 Key");
 });
@@ -209,6 +230,12 @@ function stopCapture() {
 }
 
 document.addEventListener("keydown", (e) => {
+  // 不在改键状态时，Esc = 关掉设置窗（和平点右上角 ✕ 是同一套收尾逻辑）
+  if (e.key === "Escape" && !capture) {
+    e.preventDefault();
+    $("btnCloseSettings").click();
+    return;
+  }
   if (!capture) return;
   e.preventDefault();
   if (e.key === "Escape") {
@@ -245,17 +272,24 @@ function collect() {
   const out = {
     // 恢复默认到「系统字体」时下拉框会显示列表第一个（因为没有"空"选项），
     // 这里要写回空串，否则"系统默认"会变成"选了 Noto Sans SC"。
-    ui_font: fontIsSystemDefault ? "" : ($("fontSel").value || ""),
+    ui_font: $("fontSel").value || "",
+    // 只有"配置已经读到"或"用户手动切过"才带上 engine：
+    // 否则刚打开设置、配置还没回来时点保存，会把本地的 local 又写回 ai
+    ...(cfg || engineTouched ? { engine: engineNow } : {}),
     ui_scale: scaleNow,
     require_game: !!$("chkGame").checked,
-    engine: isOffline() ? "offline" : "ai",
     hotkey: hk,
   };
 
   const box = $("apiKey");
   const typed = box.value.trim();
-  if (cfg && cfg._clearKey) out.api_key_clear = true;
-  else if (typed && typed !== (box.dataset.original || "")) out.api_key = typed;
+  if (typed) {
+    // 明确输入了 Key：以输入为准（哪怕之前点过「清除」）
+    out.api_key = typed;
+    if (cfg) cfg._clearKey = false;
+  } else if (cfg && cfg._clearKey) {
+    out.api_key_clear = true;
+  }
   return out;
 }
 
@@ -270,6 +304,9 @@ $("btnSave").addEventListener("click", () => {
 
 /* 窗口重新打开时由 Rust 侧调用：丢掉未保存状态，重新拉一次已保存的配置 */
 window.__refresh = () => {
+  // 关窗时如果还停在"按任意键…"，重开后会吞掉所有按键 —— 这里强制收尾
+  stopCapture();
+  document.querySelectorAll(".keybox").forEach((b) => { delete b.dataset.newValue; });
   formDirty = false;
   try { ws.send(JSON.stringify({ type: "settings_get" })); } catch (e) {}
 };
@@ -285,6 +322,13 @@ $("btnPickArea").addEventListener("click", () => {
 
 $("btnShot").addEventListener("click", async () => {
   $("btnShot").textContent = "截图中…";
+  const img = $("shotPreview");
+  // 后端没框选区域时不会生成 png：以前是塞一个 404 的破图，用户不知道为啥
+  img.onerror = () => {
+    $("shotRow").hidden = true;
+    setStatus("截图失败：先在「翻译区域」里框选聊天窗口", "err");
+    fitSelf();
+  };
   try {
     await fetch(API + "/capture_test", { method: "POST" });
     await new Promise((r) => setTimeout(r, 500));
@@ -292,6 +336,7 @@ $("btnShot").addEventListener("click", async () => {
     $("shotRow").hidden = false;
     setTimeout(fitSelf, 120);
   } catch (e) {
+    setStatus("截图失败：连不上后端", "err");
   } finally {
     $("btnShot").textContent = "测试截图";
   }
@@ -327,6 +372,11 @@ $("btnCloseSettings").addEventListener("click", () => {
   }
 });
 
+/* 取消 = 不保存直接关（和右上角 ✕ 同一条路径，未保存的改动自然丢掉） */
+$("btnCancel").addEventListener("click", () => {
+  $("btnCloseSettings").click();
+});
+
 /* ---------------- WS ---------------- */
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -339,18 +389,31 @@ function connect() {
     let msg;
     try { msg = JSON.parse(e.data); } catch (err) { return; }
     if (msg.type === "settings" && msg.cfg) {
+      // 后端让引导"去框选区域"（按热键时还没框过）
+      if (msg.hint === "capture") markCaptureHint();
       // 有没保存的改动就别覆盖（见 formDirty 注释）
       if (formDirty) return;
       apply(msg.cfg);
     } else if (msg.type === "settings_saved") {
       if (msg.ok) {
         formDirty = false;
-        setStatus("已保存", "ok");
+        if (msg.warn) setStatus("已保存 · " + msg.warn, "err");
+        else setStatus("已保存", "ok");
         applyFontToSelf(msg.cfg);
         fitSelf();
       } else {
+        // 后端拒了某项（例如没 Key 却切 AI）：其它字段已经落盘，这里按真实配置
+        // 重新铺一遍，别让开关停在「看着切了、其实没切」的假状态上。
         setStatus("保存失败：" + (msg.error || "未知"), "err");
+        if (msg.cfg) {
+          formDirty = false;
+          apply(msg.cfg);
+          fitSelf();
+        }
       }
+    } else if (msg.type === "need_capture") {
+      // 设置窗已经开着时按热键：不用等重新拉配置，直接标红「重新框选」
+      markCaptureHint();
     }
   };
 }
@@ -360,6 +423,9 @@ function applyFontToSelf(c) {
   if (c.ui_font) {
     document.documentElement.style.setProperty(
       "--font", `"${c.ui_font}", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif`);
+  } else {
+    // 选了"系统默认"：删掉内联变量，否则窗口隐藏再打开还是旧字体
+    document.documentElement.style.removeProperty("--font");
   }
 }
 

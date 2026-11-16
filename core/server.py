@@ -14,7 +14,7 @@ import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from . import config as cfg_mod
-from . import state
+from . import usage as usage_mod
 from . import ws
 from .log import log
 from .origins import ALLOWED as ALLOWED_ORIGINS
@@ -46,6 +46,11 @@ def push(payload):
 def notify(text, ms=0):
     """提示条（翻译中 / 游戏未运行 / 还没有翻译记录…）"""
     ws.HUB.push_notice(text, ms)
+
+
+def apply_pricing(cfg):
+    """把 config.json 里的自定义价目灌进 usage（空表 = 用内置）"""
+    usage_mod.set_prices((cfg or {}).get("pricing") or {})
 
 
 def push_settings(cfg):
@@ -106,7 +111,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _serve_file(self, rel):
         path = os.path.normpath(os.path.join(APP_DIR, rel))
-        if not path.startswith(APP_DIR) or not os.path.isfile(path):
+        # 用 commonpath 判是否还在 app/ 里：字符串 startswith 会被 app_xxx 这类同名前缀骗过去
+        try:
+            inside = os.path.commonpath([os.path.abspath(APP_DIR),
+                                         os.path.abspath(path)]) == os.path.abspath(APP_DIR)
+        except ValueError:
+            inside = False
+        if not inside or not os.path.isfile(path):
             self._send(404, b"not found")
             return
         ctype = {
@@ -189,8 +200,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/window_settings"):
             open_q = self.path.split("open=", 1)[-1] if "open=" in self.path else "0"
-            now = state.set_settings_open(open_q.startswith("1"))
-            log("设置窗口 " + ("打开" if now else "关闭"))
+            log("设置窗口 " + ("打开" if open_q.startswith("1") else "关闭"))
             self._send(200, b'{"ok":true}', "application/json; charset=utf-8")
             return
         if self.path.startswith("/debug"):
@@ -257,6 +267,7 @@ def serve(port=HTTP_PORT, demo=False):
             print(f"[core] 用测试图代替截屏：{argv[i + 1]}")
 
     cfg = cfg_mod.load()
+    apply_pricing(cfg)
     ws.start_in_thread()
     try:
         httpd = CoreHTTP(("127.0.0.1", port), Handler)

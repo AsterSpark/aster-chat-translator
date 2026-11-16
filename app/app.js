@@ -23,89 +23,168 @@ const MOCK = {
 };
 
 
-/* 一行译文拆成 元信息 + 正文 */
-const HEAD = /^(\d{1,2}:\d{2})\s*((?:\[[^\]]{1,18}\]\s*)+)[:：]?\s*(.*)$/;
-const HEAD2 = /^((?:\[[^\]]{1,18}\]\s*)+)[:：]?\s*(.*)$/;
+/* 一行译文拆成 元信息 + 正文。
+   排版定稿（v0.1.2）：元信息一行（时间 + 频道标签 + 说话人），正文一行。
+   以前的两个坑：
+     1) 名字长度卡 18 字，"Lavabeard Moltenbrow" 这种超了就落进正文，
+        于是有的行两行、有的行一行，看着像排版坏了；
+     2) 名字带方括号进正文，和游戏里一模一样但抢视觉。
+   现在统一：`19:49 [1] Lavabeard Moltenbrow` / 正文（说话人去掉方括号）。
+*/
+const RX_TIME = /^(\d{1,2}:\d{2})\s*/;
+const RX_TAGS = /^((?:\[[^\]]{1,40}\]\s*)+)[:：]?\s*/;
+const RX_NAME = /^([^\[\]:：]{1,40})[:：]\s*/;
 
 /* 当前显示的内容，供「我想说」当语境 */
 let current = { raw: "", translation: "" };
 
 function splitLine(line) {
-  const m = HEAD.exec(line) || HEAD2.exec(line);
-  if (!m) return { meta: "", body: line };
-  return { meta: `${m[1]}  ${m[2]}`, body: m[3] };
+  let s = (line || "").trim();
+  let time = "";
+  let tags = "";
+
+  const mt = RX_TIME.exec(s);
+  if (mt) { time = mt[1]; s = s.slice(mt[0].length); }
+
+  const mg = RX_TAGS.exec(s);
+  if (mg) {
+    tags = mg[1].trim();
+    s = s.slice(mg[0].length);
+  }
+  // 说话人：方括号后面紧跟 "Name: 正文" 时也要拆出来。
+  // 判断依据是"最后一个方括号是频道/等级"（[1] / [1. 综合]），而不是"有没有括号"——
+  // 以前只要有一个括号就跳过，于是 `09:54 [1] Name: 正文` 的人名被塞进了正文。
+  const lastTag = (tags.match(/\[([^\]]*)\]\s*$/) || [])[1] || "";
+  const channelish = !tags || /^[0-9]/.test(lastTag)
+    || /综合|交易|本地防务|队伍|团队|公会|小队/.test(lastTag);
+  if (channelish) {
+    const mn = RX_NAME.exec(s);
+    if (mn && !/[。！？!?]/.test(mn[1])) {
+      tags = tags ? `${tags} ${mn[1].trim()}` : mn[1].trim();
+      s = s.slice(mn[0].length);
+    }
+  }
+
+  // 中文客户端：`[张三] 悄悄地对你说：` / `张三说：` —— 把"说"这部分也算进 meta
+  if (!/说\s*[:：]/.test(tags)) {
+    const ms = /^(.{1,20}?)\s*(悄悄地对你说|说)\s*[:：]\s*/.exec(s);
+    if (ms && !/[。！？!?]/.test(ms[1])) {
+      tags = tags ? `${tags} ${ms[1].trim()}${ms[2]}：` : `${ms[1].trim()}${ms[2]}：`;
+      s = s.slice(ms[0].length);
+    }
+  }
+
+  // 标签里最后一组是说话人：去掉方括号；前面的频道标签保留原样（[1] / [公会]）
+  if (tags) {
+    const parts = [...tags.matchAll(/\[([^\]]*)\]/g)].map((m) => m[1].trim());
+    if (parts.length >= 2) {
+      const name = parts.pop();
+      tags = parts.map((p) => `[${p}]`).join(" ") + " " + name;
+    }
+  }
+
+  const meta = [time, tags].filter(Boolean).join(" ");
+  return { meta, body: s || (meta ? "" : line) };
 }
 
-const ENGINE_LABEL = {
-  ai: "AI 模型",
-  local: "离线词库",
-  glossary: "离线词库",
-  offline: "离线词库",
-};
-
-function showEngine(engine) {
+/* 顶部那枚小标签：AI 模式显示「AI 模型」，本地词库模式显示「本地词库」 */
+function showEngine(mode) {
   const el = $("engineNote");
   if (!el) return;
-  // 顶部标签跟引擎走：AI 模型 / 离线词库（与设置里的引擎开关一致）
-  const text = ENGINE_LABEL[engine] || "离线词库";
   el.hidden = false;
-  el.textContent = text;
-  el.dataset.engine = ENGINE_LABEL[engine] ? engine : "glossary";
+  const local = mode === "local";
+  el.textContent = local ? "本地词库" : "AI 模型";
+  el.dataset.mode = local ? "local" : "ai";
 }
 
+/* 「我想说」要调模型：本地词库模式下用不了，直接灰掉并说清楚原因，
+   别让用户点了之后再收到一句"要填 Key" */
+let composeOn = true;
+let engineMode = "";      // 来自 settings 的引擎："" = AI，local = 本地词库
+let busyNow = false;      // "生成中"，别被 setComposeEnabled 顺手解禁
+
+function setComposeEnabled(on) {
+  composeOn = !!on;
+  const btn = $("btnGenerate");
+  const box = $("intent");
+  if (btn) btn.disabled = !composeOn || busyNow;
+  if (box) box.disabled = !composeOn;
+  // 输入框上方那行小字是自绘的（不是 placeholder），要改它而不是 placeholder
+  const field = document.getElementById("intentHint");
+  if (field) {
+    field.textContent = composeOn ? "用中文写，回车生成英文" : "本地词库模式 · 切回 AI 模型才能生成";
+    field.hidden = composeOn ? (box && box.value.length > 0) : false;
+  }
+  // 本地模式下抽屉里那行提示会和输入框挤在一起，藏掉
+  const hint = $("drawerHint");
+  if (hint) hint.hidden = !composeOn;
+}
+
+let rawLinesCache = [];
 let rawResetTimer = null;
+let rawTarget = null;          // null = 停在最新；数字 = 当前指向的那条
+const RAW_ROW_H = 23;          // 单行高度，也是"把目标行顶到中间"需要的偏移
 
-/* 鼠标离开译文：撤掉高亮，并把滚动收进"不露垫片"的范围
-   —— 首条落在第 1 行、末条落在第 3 行，中间那些本来就在第 2 行、不动 */
-const RAW_PAD = 23;
-
-function settleRawScroll() {
+/* 建出全部原文行（视口只露 3 行，其余靠滚动） */
+function buildRaw(lines) {
   const box = $("rawText");
   if (!box) return;
-  const max = box.scrollHeight - box.clientHeight;
-  const low = Math.min(RAW_PAD, max);
-  const high = Math.max(low, max - RAW_PAD);
-  const want = Math.min(Math.max(box.scrollTop, low), high);
-  if (Math.abs(want - box.scrollTop) > 0.5) {
-    box.scrollTo({ top: want, behavior: "smooth" });
-  }
+  rawLinesCache = lines;
+  box.innerHTML = "";
+  (lines.length ? lines : ["—"]).forEach((t, i) => {
+    const d = document.createElement("div");
+    d.className = "raw-line";
+    d.dataset.i = i;
+    d.title = t || "";
+    d.textContent = t || "\u00a0";
+    box.appendChild(d);
+  });
+}
+
+/* 指向第 i 条：高亮它，并平滑滚到让它停在中间那格（首尾由上下留白补足） */
+function focusRaw(i) {
+  const box = $("rawText");
+  if (!box) return;
+  const line = box.querySelector(`.raw-line[data-i="${i}"]`);
+  box.querySelectorAll(".raw-line.hl").forEach((el) => el.classList.remove("hl"));
+  box.classList.toggle("hl-on", !!line);
+  if (!line) return;
+  line.classList.add("hl");
+  rawTarget = i;
+  const target = Math.max(0, line.offsetTop - box.offsetTop - RAW_ROW_H);
+  box.scrollTo({ top: target, behavior: window.__rawInstant ? "auto" : "smooth" });
+}
+
+/* 鼠标移开：去掉高亮，平滑滚回最新（最后一条停在中间） */
+function resetRaw(instant) {
+  const box = $("rawText");
+  if (!box) return;
+  box.classList.remove("hl-on");
+  box.querySelectorAll(".raw-line.hl").forEach((el) => el.classList.remove("hl"));
+  rawTarget = null;
+  const top = box.scrollHeight - box.clientHeight;
+  if (instant || window.__rawInstant) box.scrollTop = top;
+  else box.scrollTo({ top, behavior: "smooth" });
 }
 
 function scheduleRawReset() {
   if (rawResetTimer) clearTimeout(rawResetTimer);
   rawResetTimer = setTimeout(() => {
     rawResetTimer = null;
-    const box = $("rawText");
-    if (!box || box.querySelector(".raw-line.hl")) return;   // 已经指到别的行了
-    box.classList.remove("hl-on");
-    settleRawScroll();
+    resetRaw(false);
   }, 120);
 }
 
-function highlightRaw(index, on) {
-  const box = document.querySelector(".raw");
-  const target = document.querySelector(`.raw-line[data-i="${index}"]`);
-  // 原文和译文条数不等时可能找不到对应的原文行。这种情况下**不能**整体变暗，
-  // 否则会出现"整块变暗却没有任何一条高亮"的怪状态。
-  if (box) box.classList.toggle("hl-on", !!on && !!target);
-  if (!target) return;
-  target.classList.toggle("hl", on);
-  if (!on) return;
-
-  // 用 getBoundingClientRect 算，不依赖 offsetTop 的定位祖先
-  const b = box.getBoundingClientRect();
-  const t = target.getBoundingClientRect();
-  const want = box.scrollTop + (t.top - b.top) - (box.clientHeight - t.height) / 2;
-  const max = box.scrollHeight - box.clientHeight;
-  box.scrollTo({ top: Math.max(0, Math.min(want, max)), behavior: "smooth" });
-}
-
 function render(result) {
-  showEngine(result.engine);
   current.raw = result.raw || "";
   current.translation = result.translation || "";
+  current.mode = result.mode || "";      // "" = AI，local = 本地词库
+  showEngine(current.mode);
+  setComposeEnabled(engineMode !== "local");
 
   const judgeCard = $("judgeCard");
+  const transCard = $("transRows") && $("transRows").closest(".card");
+  if (transCard) transCard.hidden = false;   // 切换态可能把它藏过
 
   if (result.error) {
     $("barTitle").textContent = "翻译失败";
@@ -122,49 +201,46 @@ function render(result) {
   judgeCard.classList.remove("error");
 
   $("barTitle").textContent = result.prefix || "Aster 聊天翻译";
-  const rawBox = $("rawText");
-  rawBox.innerHTML = "";
-  (result.raw || "—").split("\n").forEach((line, i) => {
-    const d = document.createElement("div");
-    d.className = "raw-line";
-    d.dataset.i = i;
-    d.textContent = line || " ";
-    rawBox.appendChild(d);
+  // 原文：建出全部行，视口三行，默认滚到最新一条（它停在中间）
+  let rawArr = (result.raw || "—").split("\n");
+  while (rawArr.length > 1 && !rawArr[rawArr.length - 1].trim()) rawArr.pop();
+  buildRaw(rawArr);
+  resetRaw(true);
+  // 字体/尺寸变化后再校一次：如果这时用户已经指向某条，就保持在那条上，别弹回最新
+  requestAnimationFrame(() => {
+    if (rawTarget === null) resetRaw(true);
+    else focusRaw(rawTarget);
   });
-
-  rawBox.scrollTop = 23;   // 垫片高度：三行铺满，不留空行
-  settleRawScroll();
 
   const rows = $("transRows");
   rows.innerHTML = "";
   rows.onmouseleave = scheduleRawReset;
   const allLines = (result.translation || "—").split("\n").filter((l) => l.trim());
-  const lines = allLines.slice(-6);   // 弹窗显示最后 6 条
-  const lineOffset = allLines.length - lines.length;
+  const MAX_VISIBLE = 6;          // 译文区最多露出 6 条，再多就滚动
+  const lines = allLines;
 
-  // 原文卡片只放得下三行，译文最多显示六条 —— 超出的部分是"静默消失"的，
-  // 光看卡片根本不知道还有。标题里报总数，至少让人知道该滚动/该悬停。
+  // 原文卡片只放得下三行，译文最多露六条 —— 超出的部分光看卡片不知道还有，
+  // 标题里报总数，至少让人知道能滚。
   const nRaw = (result.raw || "").split("\n").filter((l) => l.trim()).length;
   const rawTitle = $("rawTitle");
   if (rawTitle) rawTitle.textContent = nRaw > 3 ? `原文 · ${nRaw} 条` : "原文";
   const transTitle = $("transTitle");
   if (transTitle) {
-    transTitle.textContent = allLines.length > lines.length
+    transTitle.textContent = allLines.length > MAX_VISIBLE
       ? `翻译 · ${allLines.length} 条` : "翻译";
   }
+  const rowStarts = [];   // 每条聊天对应的第一个 DOM 行（一条可能占 meta+正文两行）
   lines.forEach((line, k) => {
     const { meta, body } = splitLine(line);
     const row = document.createElement("div");
     row.className = "row";
-    row.dataset.i = lineOffset + k;
     row.addEventListener("mouseenter", () => {
       if (rawResetTimer) { clearTimeout(rawResetTimer); rawResetTimer = null; }
       row.classList.add("hl");
-      highlightRaw(lineOffset + k, true);
+      focusRaw(k);                 // 对应原文平滑滚到中间
     });
     row.addEventListener("mouseleave", () => {
       row.classList.remove("hl");
-      highlightRaw(lineOffset + k, false);
       scheduleRawReset();
     });
     if (meta) {
@@ -178,7 +254,31 @@ function render(result) {
     b.textContent = body;
     row.appendChild(b);
     rows.appendChild(row);
+    rowStarts.push(row);
   });
+
+  // 超过 6 条：裁到刚好露出最后 6 条（按"聊天条数"算，一条占 1~2 个 DOM 行），
+  // 默认滚到最底下，也就是最新的一条。只做上下滚动。
+  (function capTransRows() {
+    rows.style.maxHeight = "none";
+    rows.style.overflowY = "hidden";
+    rows.style.overflowX = "hidden";   // 别让 -8px 的负边距撑出横向滚动条
+    rows.style.paddingRight = "0";
+    if (rowStarts.length > MAX_VISIBLE) {
+      // 必须用 offsetTop/offsetHeight：getBoundingClientRect 会被 html zoom 放大，
+      // 而 maxHeight 要的是未缩放布局值（120% 时会多露一条、80% 时少露一条）。
+      const start = rowStarts[rowStarts.length - MAX_VISIBLE];
+      const bottom = rowStarts[rowStarts.length - 1].offsetTop
+                   + rowStarts[rowStarts.length - 1].offsetHeight;
+      const h = bottom - start.offsetTop + 2;
+      rows.style.maxHeight = Math.max(48, h) + "px";
+      rows.style.overflowY = "auto";
+      rows.style.paddingRight = "6px";   // 给滚动条让位，别压字
+      rows.scrollTop = rows.scrollHeight;
+    } else {
+      rows.scrollTop = 0;
+    }
+  })();
 
   if (result.summary) {
     judgeCard.hidden = false;
@@ -197,7 +297,7 @@ function clearReplies() {
   $("replyHead").textContent = "建议回复 · 点一下复制";
   $("replyHead").hidden = false;
   const hint = $("drawerHint");
-  if (hint) hint.hidden = false;
+  if (hint) hint.hidden = !composeOn;
   const f = $("floatReplies");
   if (f) f.hidden = true;
   // 圆球常驻，不随清空隐藏
@@ -227,6 +327,7 @@ function renderReplies(items, title) {
   box.innerHTML = "";
   if (!items || !items.length) {
     $("replyHead").hidden = true;
+    $("replyHead").textContent = "建议回复 · 点一下复制";
     return;
   }
   $("replyHead").textContent = title || "按你的意思 · 点一下复制";
@@ -243,6 +344,10 @@ function renderReplies(items, title) {
   for (const it of items) {
     const card = document.createElement("div");
     card.className = "reply-card";
+    // 键盘也能用：Tab 聚焦、Enter/Space 复制
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", "复制这条英文回复");
 
     const badge = document.createElement("span");
     badge.className = "reply-copied";
@@ -261,11 +366,18 @@ function renderReplies(items, title) {
       card.appendChild(cn);
     }
 
-    card.addEventListener("click", () => {
+    const doCopy = () => {
       copyText(it.en || "");
       // 只保留最近一次点击的「已复制」
       box.querySelectorAll(".reply-card.copied").forEach((c) => c.classList.remove("copied"));
       card.classList.add("copied");
+    };
+    card.addEventListener("click", doCopy);
+    card.addEventListener("keydown", (e) => {
+      if (e.key !== "Enter" && e.key !== " ") return;
+      // 空格不要滚动页面
+      e.preventDefault();
+      doCopy();
     });
     box.appendChild(card);
   }
@@ -297,9 +409,10 @@ let ws = null;
 let seq = 0;
 
 function setBusy(busy) {
+  busyNow = !!busy;
   const btn = $("btnGenerate");
-  btn.disabled = busy;
-  btn.textContent = busy ? "生成中…" : "生成";
+  btn.disabled = busyNow || !composeOn;   // 本地词库模式下永远保持禁用
+  btn.textContent = busyNow ? "生成中…" : "生成";
 }
 
 $("btnGenerate").addEventListener("click", () => {
@@ -314,10 +427,18 @@ $("btnGenerate").addEventListener("click", () => {
   }
   const id = ++seq;
   setBusy(true);
-  ws.send(JSON.stringify({
-    type: "compose", id, intent,
-    raw: current.raw, translation: current.translation,
-  }));
+  try {
+    ws.send(JSON.stringify({
+      type: "compose", id, intent,
+      raw: current.raw, translation: current.translation,
+    }));
+  } catch (e) {
+    setBusy(false);
+    invoke("show_notice", { text: "发送失败，稍后重试", ms: 2600 });
+    return;
+  }
+  // 兜底：后端重启/丢包时不会有 compose 回执，30 秒后自己解开按钮
+  setTimeout(() => { if ($("btnGenerate").disabled) setBusy(false); }, 30000);
 });
 
 function syncIntentHint() {
@@ -334,7 +455,10 @@ document.addEventListener("DOMContentLoaded", () => {
 });
 
 $("intent").addEventListener("keydown", (e) => {
-  if (e.key === "Enter") $("btnGenerate").click();
+  if (e.key !== "Enter") return;
+  if (e.isComposing || e.keyCode === 229) return;   // 输入法选词的回车不算
+  e.preventDefault();
+  $("btnGenerate").click();
 });
 
 /* ---------------- 应用设置（字体 / 缩放） ---------------- */
@@ -343,9 +467,17 @@ function applySettings(cfg) {
   const sc = Number(cfg.ui_scale) || 1;
   window.__wowScale = sc;
   document.documentElement.style.zoom = sc;
-  if (cfg.ui_font) {
+  applyFont(cfg.ui_font);
+}
+
+/* ui_font 为空 = 用系统默认字体：必须把内联变量删掉，不然窗口 hide() 后再打开
+   还挂着上一次设的字体（窗口是隐藏不是销毁，样式会留着）。 */
+function applyFont(font) {
+  if (font) {
     document.documentElement.style.setProperty(
-      "--font", `"${cfg.ui_font}", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif`);
+      "--font", `"${font}", "Microsoft YaHei UI", "Microsoft YaHei", sans-serif`);
+  } else {
+    document.documentElement.style.removeProperty("--font");
   }
 }
 
@@ -364,7 +496,8 @@ function syncWindowHeight() {
   const cssH = Math.ceil(el.offsetHeight || el.scrollHeight);
   // 别超过屏幕可用高的 94%，超了就靠页面内滚动（规格 §8）
   // 只能用屏幕高度当上限：用 innerHeight 会形成「窗口变矮→上限变小→继续变矮」的死循环
-  const maxH = Math.floor((window.screen.availHeight || 800) * SCREEN_USE_RATIO);
+  // 上限按"缩放后不超过屏幕"算：fit_window 会把高度再乘 SCALE()
+  const maxH = Math.floor((window.screen.availHeight || 800) * SCREEN_USE_RATIO / SCALE());
   const h = Math.min(cssH, maxH);
   el.style.maxHeight = maxH + "px";
   if (h > 120) {
@@ -390,6 +523,42 @@ function showPopupWindow() {
   }
 }
 
+/* 切换模式时立即把弹窗切成新模式：
+   旧结果是另一种模式翻的，继续挂着会误导（标签是本地词库、内容却是 AI 译文）。
+   这里只换显示状态 + 清掉旧内容；真正的翻译等用户按热键 —— 设置窗开着时截图
+   会把设置窗自己也截进去，所以不在切换瞬间自动翻。 */
+/* 还没翻译时的"待机"画面：标题 + 原文区提示都跟着模式变，两种模式一眼能分清 */
+function showIdleView(mode) {
+  const local = mode === "local";
+  $("barTitle").textContent = local ? "已切换到「本地词库」" : "已切换到「AI 模型」";
+  if ($("rawTitle")) $("rawTitle").textContent = "原文";
+  if ($("transTitle")) $("transTitle").textContent = "翻译";
+  $("rawText").textContent = local
+    ? "本地词库模式：按热键后用词库逐词对照\n只会得到关键词大意，不是完整翻译"
+    : "AI 模式：按热键后把截图发给模型\n会得到完整译文";
+  $("transRows").innerHTML = "";
+  // 空着一张"翻译"卡片看着像坏了：待机态先藏起来，等真的出结果再显示
+  const tc = $("transRows") && $("transRows").closest(".card");
+  if (tc) tc.hidden = true;
+  const jc = $("judgeCard");
+  if (jc) jc.hidden = true;
+  clearReplies();
+  syncWindowHeight();
+}
+
+function applyEngineSwitch(mode) {
+  const local = mode === "local";
+  const next = local ? "local" : "";
+  if (current.mode === next) return;
+  current.mode = next;
+  current.raw = "";
+  current.translation = "";
+  showEngine(current.mode);
+  setComposeEnabled(!local);
+  showIdleView(current.mode);
+  // 这里不能 show_popup：设置窗这时在前台，弹窗一出来就把设置挡住了
+}
+
 /* ---------------- 连接 ---------------- */
 function connect() {
   ws = new WebSocket(WS_URL);
@@ -400,6 +569,7 @@ function connect() {
   };
   ws.onclose = () => {
     console.warn("WS 断开，2 秒后重连");
+    setBusy(false);                       // 断线时别把「生成」按钮永远卡在"生成中…"
     setTimeout(connect, 2000);
   };
   ws.onerror = () => { /* onclose 会跟着触发 */ };
@@ -413,16 +583,31 @@ function connect() {
       showPopupWindow();
     } else if (msg.type === "settings") {
       applySettings(msg.cfg);
-      // 保存设置后立刻把顶部引擎标签切过来（不用等下一次翻译）
-      const c = msg.cfg || {};
-      const hasKey = !!(c.api && c.api.key_set);
-      const eng = c.engine === "ai" ? (hasKey ? "ai" : "offline")
-                : c.engine === "offline" ? "offline"
-                : (hasKey ? "ai" : "offline");
-      showEngine(eng);
+      // 模式变了要立刻反映到弹窗上（不用等下一次翻译）。
+      // 注意：还没有任何结果时（比如刚启动）只更新标签，不要弹切换提示窗。
+      const eng = (msg.cfg || {}).engine === "local" ? "local" : "";
+      engineMode = eng;
+      setComposeEnabled(eng !== "local");
+      if (current.mode !== eng) {
+        if (current.raw || current.translation) {
+          applyEngineSwitch(eng);
+        } else {
+          current.mode = eng;
+          showEngine(current.mode);
+          setComposeEnabled(eng !== "local");
+          showIdleView(current.mode);   // 待机画面也要跟着模式变
+        }
+      } else {
+        showEngine(current.mode);
+      }
       syncWindowHeight();
     } else if (msg.type === "notice") {
       showToast(msg.text, msg.ms || 0);
+    } else if (msg.type === "need_capture") {
+      // 还没框选聊天区域：直接把设置窗拉起来（设置页会标红「重新框选」）
+      if (window.__TAURI_INTERNALS__) {
+        window.__TAURI_INTERNALS__.invoke("open_settings");
+      }
     } else if (msg.type === "compose") {
       setBusy(false);
       if (msg.ok) {
@@ -438,7 +623,9 @@ function connect() {
 }
 
 /* ---------------- 启动 ---------------- */
-if (location.protocol === "http:" || location.protocol === "https:") {
+if (window.__TAURI_INTERNALS__) {
+  connect();              // 外壳里：等后端的真数据，别先渲染一份假聊天记录
+} else if (location.protocol === "http:" || location.protocol === "https:") {
   render(MOCK);
   connect();
 } else {
@@ -450,6 +637,17 @@ $("btnClose").addEventListener("click", () => {
     window.__TAURI_INTERNALS__.invoke("hide_popup");
   } else {
     document.body.style.opacity = "0.25";
+  }
+});
+
+/* Esc = 关掉当前这个弹窗（不用去够右上角的 ✕）。
+   输入法正在组词时 Esc 是给输入法的，不抢；正在生成回复也照样允许关。 */
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Escape") return;
+  if (e.isComposing || e.keyCode === 229) return;
+  e.preventDefault();
+  if (window.__TAURI_INTERNALS__) {
+    window.__TAURI_INTERNALS__.invoke("hide_popup");
   }
 });
 

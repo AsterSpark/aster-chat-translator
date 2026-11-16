@@ -6,7 +6,7 @@
 流程：
   1. PyInstaller 打后端 → dist/AsterCore/
   2. cargo build --release 打外壳 → target/release/*.exe
-  3. 装配 dist-app/：exe + core/ + models/ + licenses/
+  3. 装配 dist-app/：exe + core/ + licenses/ + 使用说明
   4. 打 zip → dist-release/
 
 会主动拦截：install 目录里混进 config.json（含明文 API Key）或运行时日志就直接报错。
@@ -22,30 +22,38 @@ APP = os.path.join(ROOT, "dist-app")
 OUT_DIR = os.path.join(ROOT, "dist-release")
 CARGO = os.path.expanduser(r"~\.cargo\bin\cargo.exe")
 
-VERSION = "0.1.1"
-ZIP_NAME = f"Aster-Chat-Translator-{VERSION}-win64.zip"
-TOP = "Aster-Chat-Translator"      # zip 内的顶层目录（纯 ASCII，避免解压乱码）
+VERSION = "0.1.2"
+ZIP_NAME = f"AsterChatTranslator-{VERSION}-win64.zip"
+TOP = "AsterChatTranslator"        # zip 内的顶层目录（纯 ASCII、不带连字符）
 EXE_NAME = "Aster聊天翻译.exe"      # 用户看到的 exe 名（与使用说明一致，不带空格）
 
 # 使用说明正文（改这里会直接进发布包）
 README_TXT = """Aster 聊天翻译 v{ver}
 =========================
 
-聊天翻译工具。解压后双击 Aster聊天翻译.exe 即可运行，无需安装。
+截下游戏聊天窗口，翻成中文。解压后双击 Aster聊天翻译.exe 即可运行，无需安装。
 
 【首次使用】
 1. 双击 exe，右下角托盘出现星形图标
 2. 右键托盘 → 设置
-3. 「翻译区域」→ 重新框选，框住聊天窗口
-4. 「翻译模式」二选一：
-   离线词库 —— 不需要任何 Key，翻译质量较差
-   AI 模型 —— 需要填 API Key（支持 DeepSeek 等 OpenAI 兼容接口）
-5. 按下快捷键实时翻译；另一个快捷键看上次翻译（默认小键盘 + / −，可在设置里改）
+3. 「翻译区域」→ 重新框选，框住游戏聊天窗口
+4. 选「翻译模式」：AI 模型（默认，需要 Key）或 本地词库（不需要 Key）
+5. 用 AI 模式的话，在「API Key」里填好（支持 DeepSeek 等 OpenAI 兼容接口），点保存
+6. 按下快捷键实时翻译；另一个快捷键看上次翻译（默认小键盘 + / −，可在设置里改）
+
+【翻译模式：AI 模型 / 本地词库】
+设置 → 翻译模式：
+· AI 模型（默认）：看图直译，需要联网 + API Key，译文完整准确。
+· 本地词库：截屏后用内置术语表逐词对照，不联网、不要 Key、不花钱；
+  但只给关键词大意（中英混杂、语序可能乱），不是完整翻译。
+切换后点「保存」立刻生效；本地词库模式下「我想说」用不了。
 
 【注意】
-· 只适配《魔兽世界》的聊天格式，其它游戏暂不支持
-· AI 模式下截图会发送到你配置的接口（含其他玩家名字与聊天内容），介意的话用离线模式
+· AI 模式需要联网：截图会发到你填的接口（含其他玩家名字与聊天内容）
+· 本地词库模式完全离线，但只给关键词大意，不是完整翻译
+· 没填 API Key 时只有本地词库模式可用；「我想说」必须用 AI 模式
 · API Key 明文保存在 config.json，请勿把整个文件夹发给别人
+· 只适配《魔兽世界》的聊天格式，其它游戏暂不支持
 · 需要 WebView2 运行时（Win10/11 一般已自带）
 
 【许可】
@@ -113,7 +121,7 @@ def assemble():
     shutil.copy2(exe, os.path.join(APP, EXE_NAME))
     shutil.copytree(os.path.join(ROOT, "dist", "AsterCore"),
                     os.path.join(APP, "core"))
-    shutil.copytree(os.path.join(ROOT, "models"), os.path.join(APP, "models"))
+    # 发布包只带程序本体，不含任何模型目录
 
     for src, dst in (("LICENSE", "LICENSE.txt"),
                      ("THIRD-PARTY-NOTICES.md", "THIRD-PARTY-NOTICES.md"),

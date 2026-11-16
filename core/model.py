@@ -59,7 +59,7 @@ VISION_SYS = """你是《魔兽世界》英文聊天翻译器，输入一张聊�
 4 raw 只照抄：不改写、不补全、不续写、不编造图上没出现的行
 5 频道名必须逐字照抄，一个字都不许改：图上写 [队伍] 就写 [队伍]，不许写成 [公会]/[团队]/[小队]；图上写 [1. 交易] 就写 [1. 交易]，不许写成 [1. 综合]。频道名只有这几种可能：[队伍] [团队] [公会] [小队] [1. 综合] [1. 交易] [1. 本地防务] [密语]，但**以图上实际写的为准**，看不清就保留你看到的字形，不要替换成"更合理"的频道
 6 原文本身就是中文的行，译文照抄中文，不要反译成英文
-7 物品链接、价格、数量照原样保留数字（5k 就是 5k，不要自己加"金"、不要换算）
+7 物品链接、价格、数量照原样保留数字（5k 就是 5k，不要自己加"金"、不要换算）；`[[32+] 名称]` 这类任务/物品链接必须**逐字照抄**：两个左方括号、等级数字、加号、右方括号、链接里的中文都不许改、不许翻译、不许少写一个括号；链接与前后文字之间保留一个空格
 8 译文用简体中文口语，人名和副本名保留原文或通用译名；缩写按此展开：wts=出售 wtb=求购 cod=货到付款 pst=密我 inv=拉我 lfm=招人 brb=马上回来 ty=谢谢 np=不客气 need=缺；称呼类口语按**意思**译，不要字面：dog / man / bro / dude / mate 都是「兄弟 / 哥们」（绝不译成「狗」）
 9 系统通知、获得物品、成就、频道公告一律忽略，不进 raw
 10 summary 一句话、最多 20 字：先说大概在聊什么，再给要不要理会的判断（可回 / 不用回 / 可回可不回都行，拿不准就写可回可不回）；优先看队伍和私聊，交易频道喊话一般不用回。不写人名、不提职业种族、不复述原文
@@ -72,7 +72,7 @@ VISION_SYS = """你是《魔兽世界》英文聊天翻译器，输入一张聊�
 SYSTEM_RE = None
 
 
-def _drop_system(raw, translation, limit=6):
+def _drop_system(raw, translation, limit=8):
     """去掉系统/通知类行，并只保留最后 limit 行"""
     import re as _re
     global SYSTEM_RE
@@ -244,7 +244,7 @@ def compose(cfg, intent, raw="", zh="", timeout=45):
     log(f"compose 成功：{len(out)} 条，意图={intent[:20]!r}")
     return out[:3]
 
-def vision(cfg, png_bytes, timeout=90):
+def vision(cfg, png_bytes, timeout=90, max_lines=8):
     """图片直读：把聊天截图交给模型，返回 {raw, translation, summary, replies}"""
     if os.environ.get("WOWTR_FORCE_VISION_FAIL") == "1":
         raise ModelError("（测试）图片直读被强制关闭")
@@ -313,7 +313,7 @@ def vision(cfg, png_bytes, timeout=90):
         raise ModelError("模型没读出聊天内容")
 
     log(f"vision 成功：raw {len(raw.splitlines())} 行 / 译文 {len(zh.splitlines())} 行")
-    raw, zh = _drop_system(raw, zh)
+    raw, zh = _drop_system(raw, zh, limit=max_lines)
     return {"raw": raw, "translation": zh,
             "summary": str(payload.get("summary") or "").strip(),
             "replies": replies[:3]}
@@ -323,7 +323,7 @@ TEXT_SYS = """你是《魔兽世界》英文聊天翻译器。输入是 OCR 出�
 规则：
 1 一行对一行、顺序不变；最多 12 行
 2 原文是英文就译成中文；原文本身就是中文的行，照抄，不要反译成英文
-3 时间统一写 08:08；物品链接、价格、数量照原样保留数字
+3 时间统一写 08:08；物品链接、价格、数量照原样保留数字；`[[32+] 名称]` 这类链接逐字照抄（方括号、等级、链接里的中文都不许改），链接前留一个空格
 4 缩写按此展开：wts=出售 wtb=求购 cod=货到付款 pst=密我 inv=拉我 lfm=招人 brb=马上回来 ty=谢谢 np=不客气 need=缺；称呼类口语按意思译，dog / man / bro / dude 都是「兄弟 / 哥们」
 5 系统通知、获得物品、成就、频道公告忽略
 6 OCR 看不清的字符按最接近的英文保留，不要留空、不要凭空补内容

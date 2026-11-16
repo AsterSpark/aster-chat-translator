@@ -13,10 +13,13 @@ PATH = os.path.join(ROOT, "last_result.json")
 
 
 def save(result):
+    """先写临时文件再替换：回看时不会读到半截 JSON"""
     try:
-        with open(PATH, "w", encoding="utf-8") as f:
+        tmp = PATH + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
             json.dump({"ts": time.strftime("%Y-%m-%d %H:%M:%S"), "result": result},
                       f, ensure_ascii=False, indent=1)
+        os.replace(tmp, PATH)
     except Exception as e:
         log(f"保存上一次结果失败: {e}")
 

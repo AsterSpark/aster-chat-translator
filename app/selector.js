@@ -112,3 +112,11 @@ document.addEventListener("keydown", async (e) => {
     }
   }, 2000);
 });
+
+/* 重新打开框选时由外壳调用：清掉上一次残留的选框和"正在保存…"提示 */
+window.__reset = () => {
+  start = null;
+  rect = null;
+  paint();
+  hint("拖一个框住游戏聊天窗口，回车保存，Esc 取消");
+};

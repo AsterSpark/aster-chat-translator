@@ -24,12 +24,12 @@ from . import model
 from .log import log
 from .origins import ALLOWED as ALLOWED_ORIGINS, is_app_origin
 
-CFG = cfg_mod.load()
-
 # 保存设置后由 server 注入：callable(cfg) -> None（重绑热键）
 SETTINGS_HOOK = None
 
-PORT = 17651
+# WS 跟着 HTTP 端口走（HTTP+1）：只改 WOWTR_PORT 时两边不会对不上
+HTTP_PORT = int(os.environ.get("WOWTR_PORT", "17650"))
+PORT = int(os.environ.get("WOWTR_WS_PORT", str(HTTP_PORT + 1)))
 HOST = "127.0.0.1"
 
 
@@ -80,10 +80,17 @@ class Hub:
             # 不判来源就等于把明文 Key 公开出去。
             cfg = cfg_mod.load()
             view = cfg_mod.public_view(cfg)
+            # 设置页要显示/编辑已有 Key，所以只给自家页面（Origin 白名单）带明文；
+            # public_view 本身只给「有没有」和打码提示。
             if is_app_origin(origin_of(ws)):
                 view["api"]["key_value"] = (cfg.get("api") or {}).get("key", "")
-            await ws.send(json.dumps({"type": "settings", "cfg": view},
-                                     ensure_ascii=False))
+            payload = {"type": "settings", "cfg": view}
+            # 没框选聊天区域：提示设置页把「重新框选」标红。
+            # 不用查存储状态 —— 只按当前配置判断，任何页面来回拉配置都不会把提示吃掉。
+            from .pipeline import _valid_capture
+            if not _valid_capture(cfg.get("capture")):
+                payload["hint"] = "capture"
+            await ws.send(json.dumps(payload, ensure_ascii=False))
         elif kind == "usage_get":
             from . import usage
             await ws.send(json.dumps({"type": "usage", "usage": usage.snapshot()},
@@ -97,7 +104,7 @@ class Hub:
         elif kind == "toast_ready":
             # 提示条窗口起来后主动要一次启动提示（比定时器可靠）
             await ws.send(json.dumps({"type": "notice",
-                                      "text": "Aster 聊天翻译 · 仅支持魔兽世界聊天框", "ms": 1600},
+                                      "text": "Aster 聊天翻译已就绪", "ms": 1600},
                                      ensure_ascii=False))
         else:
             await ws.send(json.dumps({"type": "error",
@@ -116,8 +123,6 @@ class Hub:
             cfg = cfg_mod.load()
             cfg["capture"] = {"left": left, "top": top, "right": right, "bottom": bottom}
             cfg_mod.save(cfg)
-            global CFG
-            CFG = cfg
             log(f"截图区域已更新：{left},{top} → {right},{bottom}")
             await ws.send(json.dumps({"type": "capture_saved", "ok": True,
                                       "rect": cfg["capture"]}, ensure_ascii=False))
@@ -128,26 +133,36 @@ class Hub:
                                       "error": str(e)[:100]}, ensure_ascii=False))
 
     async def _do_save_settings(self, ws, msg):
-        """保存设置：写本工程 config.json + 重绑热键 + 通知所有页面"""
+        """保存设置：写 config.json + 重绑热键 + 通知所有页面
+
+        设置项：翻译模式 / API Key / 字体 / 缩放 / 热键 / 游戏检测。
+        Key 留空表示不修改，api_key_clear 才清除。
+        """
         try:
             data = msg.get("cfg") or {}
             cfg = cfg_mod.load()
-            old_engine = str(cfg.get("engine") or "").lower()
             if "ui_font" in data:
                 cfg["ui_font"] = str(data["ui_font"] or "")
             if "ui_scale" in data:
                 cfg["ui_scale"] = max(0.8, min(1.5, float(data["ui_scale"])))
-            if data.get("engine") in ("auto", "ai", "offline"):
-                cfg["engine"] = data["engine"]
             if "require_game" in data:
                 cfg["require_game"] = bool(data["require_game"])
+            switch_note = ""
+            eng = str(data.get("engine") or "").strip().lower()
+            if eng in ("ai", "local"):
+                old_eng = str(cfg.get("engine") or "ai").lower()
+                if eng != old_eng:
+                    cfg["engine"] = eng
+                    switch_note = ("已切换本地词库" if eng == "local"
+                                   else "已切换 AI 模型")
+                    log(f"翻译模式：{old_eng} -> {eng}")
+
             hk = data.get("hotkey") or {}
             cfg.setdefault("hotkey", {})
             for k in ("translate_key", "last_key"):
                 if hk.get(k):
                     cfg["hotkey"][k] = str(hk[k])
 
-            # API Key：留空表示不改；api_key_clear 才清除
             cfg.setdefault("api", {})
             if data.get("api_key_clear"):
                 cfg["api"]["key"] = ""
@@ -155,26 +170,28 @@ class Hub:
             elif str(data.get("api_key") or "").strip():
                 cfg["api"]["key"] = str(data["api_key"]).strip()
                 log("API Key 已更新（长度 %d）" % len(cfg["api"]["key"]))
+            has_key = bool(str(cfg["api"].get("key") or "").strip())
 
             path = cfg_mod.save(cfg)
-            global CFG
-            CFG = cfg
             log(f"设置已保存 -> {path}")
 
             if SETTINGS_HOOK:
                 await asyncio.to_thread(SETTINGS_HOOK, cfg)
+            from . import usage as _usage
+            _usage.set_prices((cfg.get("pricing") or {}))
 
+            view = cfg_mod.public_view(cfg)
+            # 本地词库模式不需要 Key，别再催
+            local_mode = str(cfg.get("engine") or "ai").lower() == "local"
+            warn = "" if (has_key or local_mode) else "还没填 API Key：翻译会失败"
             await ws.send(json.dumps({"type": "settings_saved", "ok": True,
+                                      "warn": warn, "cfg": view,
                                       "path": path}, ensure_ascii=False))
-            await self._broadcast({"type": "settings",
-                                   "cfg": cfg_mod.public_view(cfg)})
-
-            # 翻译模式切了就在顶部提示条报一句（设置保存后才真正生效）
-            new_engine = str(cfg.get("engine") or "").lower()
-            if new_engine != old_engine:
-                is_ai = new_engine == "ai"
-                label = "AI 模型" if is_ai else "离线词库"
-                HUB.push_notice(f"已切换 {label}", 1600, "ai" if is_ai else "offline")
+            await self._broadcast({"type": "settings", "cfg": view})
+            if warn:
+                HUB.push_notice(warn, 2600, "")
+            if switch_note:
+                HUB.push_notice(switch_note, 3200, "")
         except Exception as e:
             log(f"保存设置失败: {e}")
             await ws.send(json.dumps({"type": "settings_saved", "ok": False,
@@ -192,12 +209,28 @@ class Hub:
                                       "replies": []}, ensure_ascii=False))
             return
 
+        # 没有 Key 就没有翻译通道：「我想说」也是调 API，直接拒掉更清楚。
+        cfg = cfg_mod.load()
+        if str(cfg.get("engine") or "ai").lower() == "local":
+            await ws.send(json.dumps({"type": "compose", "id": mid, "ok": False,
+                                      "error": "当前是本地词库模式：切回 AI 模型才能生成回复"},
+                                     ensure_ascii=False))
+            return
+        has_key = bool(str((cfg.get("api") or {}).get("key") or "").strip())
+        if not has_key:
+            err = "还没有配置 API 密钥，「我想说」用不了"
+            log("「我想说」被拒：" + err)
+            await ws.send(json.dumps({"type": "compose", "id": mid, "ok": False,
+                                      "error": err, "replies": []},
+                                     ensure_ascii=False))
+            return
+
         # 真实模型调用（WOWTR_STUB=1 时用占位，方便没 Key 也能调界面）
         try:
             if os.environ.get("WOWTR_STUB") == "1":
                 replies = await asyncio.to_thread(_compose_stub, intent, raw, zh)
             else:
-                replies = await asyncio.to_thread(model.compose, CFG, intent, raw, zh)
+                replies = await asyncio.to_thread(model.compose, cfg, intent, raw, zh)
             payload = {"type": "compose", "id": mid, "ok": True,
                        "replies": replies, "error": None}
         except model.ModelError as e:

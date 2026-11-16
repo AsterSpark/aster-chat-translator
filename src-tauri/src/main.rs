@@ -7,18 +7,19 @@ use tauri::Manager;
 use tauri::WebviewWindow;
 
 /// 后台 Python 后端的进程句柄，退出时杀掉
-struct Sidecar(Mutex<Option<std::process::Child>>);
+struct Sidecar(std::sync::Arc<Mutex<Option<std::process::Child>>>);
 
-/// Job Object 句柄：外壳一死（哪怕是强杀/崩溃），整棵子进程树跟着死
-struct Job(Mutex<Option<isize>>);
+/// Job Object 句柄：外壳一死（哪怕是强杀/崩溃），整棵子进程树跟着死。
+/// 这个句柄只要活着就行，代码里不需要读它 —— 所以字段标记 allow(dead_code)。
+struct Job(#[allow(dead_code)] Mutex<Option<isize>>);
 
 /// 页面最后一次报上来的 devicePixelRatio。
 /// Tauri 的 scale_factor(1.5) 和 WebView2 的 dpr(1.8) 不是一回事，
 /// 算提示条的位置必须用页面那份（尺寸也是按它算的），否则 150% 缩放下会偏。
 struct LastDpr(Mutex<f64>);
 
-/// 设置窗开着时来的翻译结果：先记一笔，关掉设置再弹出来
-struct PendingPopup(Mutex<bool>);
+/// 菜单刚弹出的时间：45ms 轮询别把"打开菜单的那一下"当成"点了外面"
+struct MenuOpenedAt(Mutex<Option<std::time::Instant>>);
 
 /// 本进程是不是第二个实例（用命名互斥量判断）。
 ///
@@ -201,24 +202,76 @@ fn start_sidecar() -> Option<std::process::Child> {
 
 
 /// 显示弹窗（前端收到 WS 数据后调用）
-#[tauri::command]
-fn show_popup(window: WebviewWindow) -> Result<(), String> {
-    let app = window.app_handle().clone();
-    // 设置窗口开着的时候不抢焦点，否则会盖住正在调的设置；
-    // 但结果不能就这么丢了 —— 记一笔，关掉设置后补显示。
-    if let Some(settings) = app.get_webview_window("settings") {
-        if settings.is_visible().unwrap_or(false) {
-            if let Some(p) = app.try_state::<PendingPopup>() {
-                if let Ok(mut g) = p.0.lock() {
-                    *g = true;
-                }
-            }
-            toast_text(&app, "翻译完成，关掉设置后查看", 2200);
-            return Ok(());
+/// 把弹窗摆回固定位置：水平居中、顶部留 12% 屏高。
+/// 以前只在创建时 center 一次，之后每次内容变高，fit_window 的"超出屏幕往上推"
+/// 会把它一点点顶走，而且再也回不来 —— 表现就是"每次打开位置都不一样"。
+/// 弹窗的"惯用顶部"：屏高 12% 处（不是按窗口高度算，避免内容一变就上下跳）
+#[cfg(windows)]
+fn popup_anchor_y(mon_pos_y: i32, mon_h: i32, win_h: i32) -> i32 {
+    let y = mon_pos_y + ((mon_h as f64) * 0.12).round() as i32;
+    let max_y = mon_pos_y + mon_h - win_h;   // 别长出屏幕底边
+    y.min(max_y).max(mon_pos_y)
+}
+
+#[cfg(windows)]
+fn place_popup(window: &WebviewWindow) {
+    if let Ok(Some(mon)) = window.current_monitor() {
+        let mp = mon.position();
+        let ms = mon.size();
+        if let Ok(size) = window.outer_size() {
+            let x = mp.x + (ms.width as i32 - size.width as i32) / 2;
+            let y = popup_anchor_y(mp.y, ms.height as i32, size.height as i32);
+            let _ = window.set_position(tauri::PhysicalPosition::new(x, y));
         }
     }
+}
+
+#[tauri::command]
+fn show_popup(window: WebviewWindow) -> Result<(), String> {
+    // 必须让弹窗拿到焦点，否则在"全屏游戏是前台"的情况下 Windows 会拒绝激活它：
+    // 窗口浮在上面但点不动（拖不动、✕ 也没反应，实测）。
+    // 任务栏因此被翻出来的问题交给"提示条不抢焦点"来缓解（见 place_and_show_toast）。
+    #[cfg(windows)]
+    place_popup(&window);
     window.show().map_err(|e| e.to_string())?;
-    window.set_focus().map_err(|e| e.to_string())
+    if let Err(e) = window.set_focus() {
+        // 抢不到焦点时窗口会"浮在上面但点不动"，只丢给前端 console 是查不出来的
+        log_line(&format!("show_popup: set_focus 失败（窗口可能点不动）：{e}"));
+        return Err(e.to_string());
+    }
+    Ok(())
+}
+
+/// 把窗口提到"最上层窗口"的最前面。
+/// 提示条和弹窗都是 alwaysOnTop，谁最后 SetWindowPos 谁在上面 —— 弹窗刚显示过时
+/// 会把提示条压在下面，所以每次弹提示条都要再抢一次 z 序（不激活，不抢焦点）。
+#[cfg(windows)]
+fn raise_topmost(window: &WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        SetWindowPos, HWND_TOPMOST, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
+    };
+    if let Ok(hwnd) = window.hwnd() {
+        unsafe {
+            SetWindowPos(hwnd.0 as _, HWND_TOPMOST, 0, 0, 0, 0,
+                         SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);
+        }
+    }
+}
+
+/// 显示窗口但不激活（不抢前台）
+#[cfg(windows)]
+fn show_no_activate(window: &WebviewWindow) -> Result<(), String> {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_SHOWNOACTIVATE};
+    let hwnd = window.hwnd().map_err(|e| e.to_string())?;
+    unsafe {
+        ShowWindow(hwnd.0 as _, SW_SHOWNOACTIVATE);
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn show_no_activate(window: &WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|e| e.to_string())
 }
 
 /// 拖动窗口（无边框窗口要靠页面通知才会动）
@@ -242,9 +295,12 @@ fn hide_popup(window: WebviewWindow) -> Result<(), String> {
 fn fit_window(window: WebviewWindow, width: f64, height: f64, dpr: f64) -> Result<(), String> {
     let dpr = if dpr > 0.5 { dpr } else { 1.0 };
     // 记下页面报的 dpr：提示条定位要用同一套换算（Tauri 的 scale_factor 不一样）
-    if let Some(state) = window.app_handle().try_state::<LastDpr>() {
-        if let Ok(mut g) = state.0.lock() {
-            *g = dpr;
+    // 只记提示条那份：其它窗口的 dpr 会把提示条定位带偏（混合 DPI 时尤其明显）
+    if window.label() == "toast" {
+        if let Some(state) = window.app_handle().try_state::<LastDpr>() {
+            if let Ok(mut g) = state.0.lock() {
+                *g = dpr;
+            }
         }
     }
     // 上限兜底：页面万一报个离谱值，别把窗口设成 10 万像素
@@ -264,6 +320,10 @@ fn fit_window(window: WebviewWindow, width: f64, height: f64, dpr: f64) -> Resul
             let (r, b) = (l + ms.width as i32, t + ms.height as i32);
             let mut x = pos.x;
             let mut y = pos.y;
+            if window.label() == "popup" {
+                // 弹窗：顶部锚在屏高 12%，换内容只影响高度，不再上下漂
+                y = popup_anchor_y(t, ms.height as i32, h as i32);
+            }
             if x + w as i32 > r { x = r - w as i32; }
             if y + h as i32 > b { y = b - h as i32; }
             if x < l { x = l; }
@@ -286,8 +346,10 @@ fn open_settings(app: tauri::AppHandle) -> Result<(), String> {
         // 让页面重新拉一次配置：上次可能留着没保存的改动，重开时要以已保存的为准
         let _ = win.eval("window.__refresh && window.__refresh();");
         trigger_post("/window_settings?open=1");
+        return Ok(());
     }
-    Ok(())
+    log_line("设置窗口不存在，open_settings 失败");
+    Err("设置窗口不可用".into())
 }
 
 /// 顶部提示条：显示并挪到屏幕顶部中间
@@ -307,12 +369,19 @@ fn place_and_show_toast(window: &WebviewWindow) -> Result<(), String> {
         .unwrap_or_else(|| window.scale_factor().unwrap_or(1.0));
     let size = window.outer_size().map_err(|e| e.to_string())?;
     if let Some(mon) = window.current_monitor().map_err(|e| e.to_string())? {
+        let mp = mon.position();
         let ms = mon.size();
-        let x = (ms.width as f64 - size.width as f64) / 2.0;
-        let y = 44.0 * dpr;
+        // 必须加上显示器原点：主屏不在 (0,0) 时（副屏在左/上、竖屏）否则会飘到别的屏
+        let x = mp.x as f64 + (ms.width as f64 - size.width as f64) / 2.0;
+        let y = mp.y as f64 + 44.0 * dpr;
         let _ = window.set_position(tauri::PhysicalPosition::new(x as i32, y as i32));
     }
-    window.show().map_err(|e| e.to_string())
+    // 提示条只是显示，绝不能抢前台 —— 一抢焦点，全屏游戏的任务栏就会翻出来
+    show_no_activate(window)?;
+    // 再抢一次 z 序：弹窗也是 topmost，刚显示过它就会把提示条压住（用户实测遮挡）
+    #[cfg(windows)]
+    raise_topmost(window);
+    Ok(())
 }
 
 /// 把 Rust 侧的一句话渲染到自绘提示条上（不弹系统对话框）。
@@ -342,7 +411,11 @@ fn toast_text(app: &tauri::AppHandle, text: &str, ms: u64) -> bool {
         "window.__showNotice && window.__showNotice({}, {ms}, \"\")",
         quote(text)
     );
-    let _ = win.eval(&js);
+    // eval 失败 = 页面还没加载好（启动早期常见）。这时既显示不出提示，又会留下
+    // 一个空的置顶提示条窗口挡鼠标，所以直接当失败处理。
+    if win.eval(&js).is_err() {
+        return false;
+    }
     let _ = place_and_show_toast(&win);
     true
 }
@@ -366,27 +439,13 @@ fn quit_app(app: tauri::AppHandle) {
 /// 关闭自己（设置窗口的 ✕ / 提示条自动收起）
 #[tauri::command]
 fn close_self(window: WebviewWindow) -> Result<(), String> {
-    let app = window.app_handle().clone();
     if window.label() == "settings" {
         trigger_post("/window_settings?open=0");
-        let pending = app
-            .try_state::<PendingPopup>()
-            .and_then(|p| p.0.lock().ok().map(|g| *g))
-            .unwrap_or(false);
-        window.hide().map_err(|e| e.to_string())?;
-        // 设置开着时来的结果，这时候补显示
-        if pending {
-            if let Some(p) = app.try_state::<PendingPopup>() {
-                if let Ok(mut g) = p.0.lock() {
-                    *g = false;
-                }
-            }
-            if let Some(popup) = app.get_webview_window("popup") {
-                let _ = popup.show();
-                let _ = popup.set_focus();
-            }
-        }
-        return Ok(());
+        return window.hide().map_err(|e| e.to_string());
+    }
+    // 日志窗只是 hide()，页面里的 1.2s 轮询不会自己停（Tauri 下 document.hidden 不变）
+    if window.label() == "logs" {
+        let _ = window.eval("window.__pause && window.__pause();");
     }
     window.hide().map_err(|e| e.to_string())
 }
@@ -397,6 +456,18 @@ const RUN_NAME: &str = "AsterChat";
 
 /// 跑一条命令并拿走输出，**不弹控制台窗口**。
 /// GUI 进程里直接 spawn 控制台程序（reg.exe）会闪一下黑框，很扎眼。
+/// 系统目录下的绝对路径：直接写 "reg" / "explorer" 会按 PATH + 当前目录搜索，
+/// 别人往程序目录丢个同名 exe 就能被顺带执行。
+fn system_exe(name: &str) -> String {
+    let root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    format!("{root}\\System32\\{name}")
+}
+
+fn explorer_exe() -> String {
+    let win = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
+    format!("{win}\\explorer.exe")
+}
+
 #[cfg(windows)]
 fn run_quiet(exe: &str, args: &[&str]) -> std::io::Result<std::process::Output> {
     use std::os::windows::process::CommandExt;
@@ -412,7 +483,7 @@ fn get_autostart() -> bool {
     #[cfg(windows)]
     {
         return matches!(
-            run_quiet("reg", &["query", RUN_KEY, "/v", RUN_NAME]),
+            run_quiet(&system_exe("reg.exe"), &["query", RUN_KEY, "/v", RUN_NAME]),
             Ok(o) if o.status.success()
         );
     }
@@ -426,9 +497,10 @@ fn set_autostart(enabled: bool) -> Result<(), String> {
     let quoted = format!("\"{}\"", exe.display());
     #[cfg(windows)]
     let out = if enabled {
-        run_quiet("reg", &["add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", &quoted, "/f"])
+        run_quiet(&system_exe("reg.exe"),
+                  &["add", RUN_KEY, "/v", RUN_NAME, "/t", "REG_SZ", "/d", &quoted, "/f"])
     } else {
-        run_quiet("reg", &["delete", RUN_KEY, "/v", RUN_NAME, "/f"])
+        run_quiet(&system_exe("reg.exe"), &["delete", RUN_KEY, "/v", RUN_NAME, "/f"])
     };
     #[cfg(not(windows))]
     let out: std::io::Result<std::process::Output> = Err(std::io::Error::other("仅 Windows"));
@@ -467,6 +539,8 @@ fn open_selector(app: tauri::AppHandle) -> Result<(), String> {
         // 页面按视口坐标算框选位置，副屏在左边时视口原点不等于屏幕原点，
         // 把窗口的物理原点告诉它，保存时才能换算成绝对屏幕坐标。
         let _ = win.eval(&format!("window.__origin = [{}, {}];", origin.0, origin.1));
+        // 上次框选残留的选框/提示要清掉（窗口只是 hide，页面不重建）
+        let _ = win.eval("window.__reset && window.__reset();");
         win.show().map_err(|e| e.to_string())?;
         win.set_focus().map_err(|e| e.to_string())?;
     }
@@ -521,6 +595,11 @@ fn open_menu(app: tauri::AppHandle) -> Result<(), String> {
     win.set_position(tauri::PhysicalPosition::new(x, y))
         .map_err(|e| e.to_string())?;
     win.show().map_err(|e| e.to_string())?;
+    if let Some(s) = app.try_state::<MenuOpenedAt>() {
+        if let Ok(mut g) = s.0.lock() {
+            *g = Some(std::time::Instant::now());
+        }
+    }
     win.set_focus().map_err(|e| e.to_string())
 }
 
@@ -528,7 +607,7 @@ fn open_menu(app: tauri::AppHandle) -> Result<(), String> {
 ///
 /// 只允许"程序目录下的 .log 文件"：这个命令把路径直接交给 explorer，而
 /// explorer 遇到 .exe / .lnk 会执行它 —— 等于一个任意程序执行原语。
-/// 页面一旦被注入（csp 目前是 null），这就是提权跳板。
+/// 页面一旦被注入（CSP 已收紧，但 eval 注入面还在），这就是提权跳板。
 #[tauri::command]
 fn open_logfile(path: String) -> Result<(), String> {
     let p = std::path::PathBuf::from(&path);
@@ -547,7 +626,7 @@ fn open_logfile(path: String) -> Result<(), String> {
     if !is_log || canon_p.parent() != Some(canon_dir.as_path()) {
         return Err("只能打开程序目录下的 .log 文件".into());
     }
-    std::process::Command::new("explorer")
+    std::process::Command::new(explorer_exe())
         .arg(&canon_p)
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -587,39 +666,6 @@ fn trigger_post(path: &str) {
     }
 }
 
-/// 收起所有窗口（点窗口外面时用）
-///
-/// 设置窗口被这里藏掉时**必须**通知后端复位「设置打开」标志：后端拿它决定
-/// 按热键要不要跳过翻译（省额度）。不通知的话窗已经看不见了，后端还以为设置
-/// 开着，之后每次热键都只弹一句「设置打开中，暂不翻译」，直到用户重新打开
-/// 设置再点一次 ✕ 才能恢复（实测可稳定复现）。
-fn hide_all_windows(app: &tauri::AppHandle) {
-    let mut settings_was_open = false;
-    // 用户主动"点外面收起全部"时，把待补显示的弹窗也一并作废：
-    // 否则一关设置又弹回来，跟他的操作对着干。
-    if let Some(p) = app.try_state::<PendingPopup>() {
-        if let Ok(mut g) = p.0.lock() {
-            *g = false;
-        }
-    }
-    for label in ["popup", "settings", "logs", "menu"] {
-        if let Some(w) = app.get_webview_window(label) {
-            if label == "settings" && w.is_visible().unwrap_or(false) {
-                settings_was_open = true;
-            }
-            // 日志窗在藏起来之前先让它停掉 1.2s 轮询：窗口只是 hide()，
-            // 文档不销毁，页面自己感知不到（Tauri 下 document.hidden 不变）。
-            if label == "logs" {
-                let _ = w.eval("window.__pause && window.__pause();");
-            }
-            let _ = w.hide();
-        }
-    }
-    if settings_was_open {
-        trigger_post("/window_settings?open=0");
-    }
-}
-
 /// 鼠标按键是否按下（物理键状态，和焦点无关）
 #[cfg(windows)]
 /// 左键状态：(现在按着, 自上次调用以来按过)。
@@ -656,7 +702,8 @@ fn cursor_in_any_window(app: &tauri::AppHandle) -> bool {
     false
 }
 
-/// 监听鼠标：任意键（含右键）按在有窗口外面 → 收起全部窗口
+/// 监听鼠标：点在我们任何窗口外面 → 只收起托盘菜单（弹窗留着）
+#[cfg(windows)]
 fn start_outside_monitor(app: tauri::AppHandle) {
     std::thread::spawn(move || {
         let mut pressed = false;
@@ -679,10 +726,21 @@ fn start_outside_monitor(app: tauri::AppHandle) {
 
             // down && !pressed = 按住的那一刻；since && !down = 两次轮询之间按完又松开的极短点击
             let clicked = (down && !pressed) || (since && !down);
-            if clicked {
+            // 托盘点击是"按完又松开"，菜单会被放在光标上方 —— 这一次点击不能算点外面
+            let just_opened = app
+                .try_state::<MenuOpenedAt>()
+                .and_then(|s| s.0.lock().ok().and_then(|g| *g))
+                .map(|t| t.elapsed() < std::time::Duration::from_millis(300))
+                .unwrap_or(false);
+            if clicked && !just_opened {
                 if !cursor_in_any_window(&app) {
-                    log_line(&format!("点外部收起（down={down} since={since}）"));
-                    hide_all_windows(&app);
+                    // 只收托盘菜单：翻译弹窗/设置/日志留着，用户自己点 ✕ 关
+                    if let Some(menu) = app.get_webview_window("menu") {
+                        if menu.is_visible().unwrap_or(false) {
+                            log_line("点菜单外面，收起菜单");
+                            let _ = menu.hide();
+                        }
+                    }
                     pressed = true;   // 这一下别重复触发
                     continue;
                 }
@@ -692,13 +750,34 @@ fn start_outside_monitor(app: tauri::AppHandle) {
     });
 }
 
+/// 提示条窗口做成"点击穿透"：它只负责显示，永远不需要点。
+/// 不加这个的话，提示条透明/隐藏后那块区域仍然是一个窗口，玩家在游戏里点过去会丢焦点。
+#[cfg(windows)]
+fn make_click_through(window: &WebviewWindow) {
+    use windows_sys::Win32::UI::WindowsAndMessaging::{
+        GetWindowLongPtrW, SetWindowLongPtrW, GWL_EXSTYLE, WS_EX_LAYERED, WS_EX_NOACTIVATE,
+        WS_EX_TOOLWINDOW, WS_EX_TRANSPARENT,
+    };
+    if let Ok(hwnd) = window.hwnd() {
+        let h = hwnd.0;
+        unsafe {
+            let ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+            let add = (WS_EX_TRANSPARENT | WS_EX_NOACTIVATE | WS_EX_TOOLWINDOW | WS_EX_LAYERED) as isize;
+            SetWindowLongPtrW(h, GWL_EXSTYLE, ex | add);
+        }
+    }
+}
+
 /// 建托盘图标：左键、右键都弹自绘菜单
 fn build_tray(app: &tauri::AppHandle) -> tauri::Result<()> {
     use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 
     let icon = match app.default_window_icon().cloned() {
         Some(i) => i,
-        None => return Ok(()),
+        None => {
+            log_line("拿不到图标资源，托盘建不起来（只剩热键可用）");
+            return Ok(());
+        }
     };
 
     TrayIconBuilder::with_id("main")
@@ -757,28 +836,33 @@ fn main() {
     // 它会在 1~3 秒后因为端口占用自己退出，白烧一次 Python 启动。
     let primary = !already_running();
     let child = if primary { start_sidecar() } else { None };
+    // Job 在 spawn 之后立刻建：万一 build() 失败退出，也能立刻收掉后端，
+    // 不用等后端自己发现父进程没了（那有几秒延迟，端口还占着）。
+    #[cfg(windows)]
+    let job = child.as_ref().and_then(make_kill_on_close_job);
+    #[cfg(not(windows))]
+    let job: Option<isize> = None;
+    let sidecar = std::sync::Arc::new(Mutex::new(child));
 
     let built = tauri::Builder::default()
         // 单实例：重复双击不会开第二份，而是把已有的设置窗口叫出来
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             open_settings_window(app);
         }))
-        .manage(Sidecar(Mutex::new(None)))
-        .manage(Job(Mutex::new(None)))
+        .manage(Sidecar(sidecar.clone()))
+        .manage(Job(Mutex::new(job)))
         .manage(LastDpr(Mutex::new(1.0)))
-        .manage(PendingPopup(Mutex::new(false)))
+        .manage(MenuOpenedAt(Mutex::new(None)))
         .setup(|app| {
-            // 后端已在 main() 里启动，这里只登记句柄 + 建 Job Object
-            if let Some(c) = child.as_ref() {
-                #[cfg(windows)]
-                {
-                    *app.state::<Job>().0.lock().unwrap() = make_kill_on_close_job(c);
-                }
-            }
-            *app.state::<Sidecar>().0.lock().unwrap() = child;
+            // 后端和 Job 都已在 main() 里建好，这里只检查它还在不在
             // 后端没起来时，窗口/托盘/设置全都正常，只有翻译是死的 —— 必须让人看见。
             // 开发跑法（target\debug 旁边没有 core\）是手动起后端，所以只在 release 弹框。
-            let has_sidecar = app.state::<Sidecar>().0.lock().unwrap().is_some();
+            let has_sidecar = app
+                .state::<Sidecar>()
+                .0
+                .lock()
+                .map(|g| g.is_some())
+                .unwrap_or(false);
             if has_sidecar {
                 watch_sidecar(app.handle().clone());
             } else {
@@ -786,11 +870,28 @@ fn main() {
                 // 开发跑法是手动起后端（target\debug 旁边没有 core\），
                 // 所以先看看端口在不在，别对着一个正常运行的后端喊"没启动"
                 if !backend_reachable() {
-                    toast_text(app.handle(), "后端没有启动，翻译不可用（检查 core 目录）", 5000);
+                    // 这个时间点页面还没加载完，提示条 eval 会失败（toast_text 会返回 false）。
+                    // 等 1.5 秒再发一次，那时 toast 页面已经就绪。
+                    let handle = app.handle().clone();
+                    std::thread::spawn(move || {
+                        std::thread::sleep(std::time::Duration::from_millis(1500));
+                        toast_text(&handle, "后端没有启动，翻译不可用（检查 core 目录）", 5000);
+                    });
                 }
             }
-            // 托盘图标
-            build_tray(app.handle())?;
+            // 提示条：不接收鼠标（透明时也点不到，不会抢游戏焦点）
+            if let Some(toast) = app.get_webview_window("toast") {
+                #[cfg(windows)]
+                make_click_through(&toast);
+            }
+
+            // 托盘图标：这里不能用 `?` —— setup 返回 Err 会让 Tauri 直接 panic，
+            // release 下没有控制台，表现为"双击没反应"。开机自启时 Explorer 未就绪
+            // 最容易踩到。降级 + 写日志 + 提示条，至少让程序活着。
+            if let Err(e) = build_tray(app.handle()) {
+                log_line(&format!("托盘创建失败：{e}（只剩热键可用）"));
+                toast_text(app.handle(), "托盘图标创建失败，请重启助手", 6000);
+            }
 
             // 调试钩子：WOWTR_SHOW_MENU=1 时启动后自动弹一次菜单。
             // 只在 debug 构建里编译进去，发布包不该带调试入口。
@@ -825,9 +926,27 @@ fn main() {
         // 无边框窗口被 Alt+F4 关掉走的是 destroy：窗口没了，之后热键推数据
         // 没有任何窗口可显示，只能重启程序（实测）。统一改成"隐藏"。
         .on_window_event(|window, event| {
-            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                api.prevent_close();
-                let _ = window.hide();
+            match event {
+                tauri::WindowEvent::CloseRequested { api, .. } => {
+                    api.prevent_close();
+                    // 日志窗只是 hide()，页面里的 1.2s 轮询不会自己停，先让它暂停
+                    if window.label() == "logs" {
+                        if let Some(w) = window.app_handle().get_webview_window("logs") {
+                            let _ = w.eval("window.__pause && window.__pause();");
+                        }
+                    }
+                    let _ = window.hide();
+                }
+                // 设置 / 日志窗口不再"永远置顶"（一直压在游戏上面很烦），
+                // 改成「谁在前台谁置顶」：点进来时浮到最上面，切走之后退回普通层级。
+                // 这样从托盘打开时不会被全屏游戏盖住，平时又不会赖在最上层。
+                tauri::WindowEvent::Focused(focused) => {
+                    let label = window.label();
+                    if label == "settings" || label == "logs" {
+                        let _ = window.set_always_on_top(*focused);
+                    }
+                }
+                _ => {}
             }
         })
         .build(tauri::generate_context!());
@@ -838,6 +957,12 @@ fn main() {
         Ok(a) => a,
         Err(e) => {
             log_line(&format!("外壳启动失败：{e}"));
+            // 后端已经拉起来了：显式收掉，别让它占着 17650 等父进程超时
+            if let Ok(mut g) = sidecar.lock() {
+                if let Some(mut c) = g.take() {
+                    let _ = c.kill();
+                }
+            }
             // 唯一的例外：走到这里说明窗口一个都没建起来，提示条也不存在，
             // 只能用系统消息框。除此之外一律用自绘 UI。
             alert(
@@ -848,14 +973,19 @@ fn main() {
         }
     };
 
+    // v0.1.2：点窗口外面**不再**收起翻译弹窗/设置/日志（玩游戏时随手点一下地面就没了，
+    // 实测很难受）。只保留托盘菜单的"点外面关掉" —— 那是菜单该有的行为。
+    #[cfg(windows)]
     start_outside_monitor(app.handle().clone());
 
     app.run(|app_handle, event| {
         if let tauri::RunEvent::Exit = event {
             // 显式移除托盘：正常退出时 Tauri 会兜底，但强杀/异常路径会留下幽灵图标
             let _ = app_handle.remove_tray_by_id("main");
-            if let Some(mut child) = app_handle.state::<Sidecar>().0.lock().unwrap().take() {
-                let _ = child.kill();
+            if let Ok(mut g) = app_handle.state::<Sidecar>().0.lock() {
+                if let Some(mut child) = g.take() {
+                    let _ = child.kill();
+                }
             }
         }
     });

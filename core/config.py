@@ -19,11 +19,13 @@ DEFAULTS = {
     # 首次安装没有截图区域：必须让用户自己去框选，不要去截一张 0×0 的图
     "capture": None,
     "ocr": {"lang": "zh-Hans-CN"},
-    "max_lines": 6,
+    "max_lines": 8,
+    # 翻译模式：ai = 视觉模型；local = 本地词库（逐词对照，不联网、不要 Key）
+    "engine": "ai",
+    # 自定义价目（元/百万 tokens），覆盖 usage.py 里的内置表；空 = 用内置
+    "pricing": {},
     "ui_font": "Noto Sans SC Medium",
     "ui_scale": 1.0,
-    # 没填 Key 时默认走离线，第一次打开就能用
-    "engine": "offline",
     "keyboard_hook": True,
     "require_game": True,
     "game_process": "Wow.exe",
@@ -77,14 +79,31 @@ def load():
             cfg = {}
     else:
         cfg = {}
-    return _deep_fill(cfg, DEFAULTS)
+    cfg = _deep_fill(cfg, DEFAULTS)
+    # v0.1.2：默认条数定为 8（6 太少、12 太多）。旧配置里是 6 或 12 的跟着换过来；
+    # 用户显式改过的其它值保持不动。
+    try:
+        if int(cfg.get("max_lines") or 0) in (6, 12):
+            cfg["max_lines"] = DEFAULTS["max_lines"]
+    except (TypeError, ValueError):
+        pass
+    # v0.1.1 的 engine 有 offline / ai 两种；v0.1.2 把 offline 改叫 local
+    eng = str(cfg.get("engine") or "ai").strip().lower()
+    if eng == "offline":
+        eng = "local"
+    if eng not in ("ai", "local"):
+        eng = "ai"
+    cfg["engine"] = eng
+    return cfg
 
 
 def save(cfg, path=None):
-    """保存到程序目录下的 config.json"""
+    """保存到程序目录下的 config.json（先写临时文件再替换，避免读到半截 JSON）"""
     path = path or LOCAL_CFG
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(cfg, f, ensure_ascii=False, indent=2)
+    os.replace(tmp, path)
     return path
 
 

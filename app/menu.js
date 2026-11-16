@@ -27,11 +27,11 @@ function paintUsage(u) {
   // 换了别家还显示 ¥ 的话，那个数字是拿 DeepSeek 的价乘出来的，纯属误导。
   const known = u.priced !== false;
 
-  el.textContent = `本次 ${calls} 次 · ${fmt(tokens)} tokens`
+  el.textContent = `本次翻译 ${calls} 次 · ${fmt(tokens)} tokens`
     + (known ? ` · ≈¥${cost}` : "");
 
   const mdl = u.model ? u.model : "本轮还没调用模型";
-  el.title = `${mdl} · ${u.peak ? "高峰" : "空闲"}时段计价`
+  el.title = `${mdl} · 金额按内置价目估算（可在 config.json 的 pricing 里覆盖）`
     + ` · 输入 ${fmt(u.prompt || 0)} / 输出 ${fmt(u.completion || 0)} tokens`
     + (known ? "" : " · 该接口未内置价表，只统计 token");
   fitMenu();
@@ -80,9 +80,16 @@ function connectWs() {
   ws.onerror = () => {};
 }
 
+const KEY_TEXT = {
+  num_add: "num +", num_sub: "num −", num_mul: "num *", num_div: "num /",
+  num_dec: "num .", num_enter: "num Enter", insert: "Insert", home: "Home",
+  end: "End", pgup: "PageUp", pgdn: "PageDown",
+};
+for (let i = 1; i <= 12; i++) KEY_TEXT["f" + i] = "F" + i;
+for (let i = 0; i <= 9; i++) KEY_TEXT["num" + i] = "小键盘 " + i;
+
 function pretty(k) {
-  const map = { num_add: "num +", num_sub: "num −" };
-  return map[k] || k;
+  return KEY_TEXT[k] || k;
 }
 
 connectWs();
@@ -114,21 +121,19 @@ $("mQuit").addEventListener("click", async () => {
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") closeMenu();
-  if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-    e.preventDefault();
-    const items = [...document.querySelectorAll(".mi")];
-    if (!items.length) return;
-    const i = items.indexOf(document.activeElement);
-    // i = -1 表示焦点还在 body 上：上/下都从边缘开始，别落到倒数第二项
-    const n = e.key === "ArrowDown"
-      ? (i < 0 ? 0 : (i + 1) % items.length)
-      : (i <= 0 ? items.length - 1 : i - 1);
-    items[n].focus();
-  }
-  if (e.key === "Enter" && document.activeElement.classList.contains("mi")) {
-    document.activeElement.click();
-  }
+  if (e.key === "Escape") { closeMenu(); return; }
+  if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+  e.preventDefault();
+  const items = [...document.querySelectorAll(".mi")];
+  if (!items.length) return;
+  const i = items.indexOf(document.activeElement);
+  // i = -1 表示焦点还在 body 上：上/下都从边缘开始，别落到倒数第二项
+  const n = e.key === "ArrowDown"
+    ? (i < 0 ? 0 : (i + 1) % items.length)
+    : (i <= 0 ? items.length - 1 : i - 1);
+  items[n].focus();
+  // 菜单项都是 <button>，Enter/Space 的原生激活已经会 click，
+  // 以前这里再手动 .click() 会一次触发两遍（翻译发两次请求）
 });
 
 /* 跟随全局界面缩放 */

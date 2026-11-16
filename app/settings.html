@@ -43,7 +43,7 @@
         <div class="lb">开机启动</div>
         <div class="ctl">
           <label class="switch">
-            <input type="checkbox" id="chkAuto">
+            <input type="checkbox" id="chkAuto" aria-label="开机启动">
             <span class="slider"></span>
           </label>
         </div>
@@ -53,7 +53,7 @@
         <div class="lb">游戏检测</div>
         <div class="ctl">
           <label class="switch">
-            <input type="checkbox" id="chkGame">
+            <input type="checkbox" id="chkGame" aria-label="只在游戏运行时翻译">
             <span class="slider"></span>
           </label>
         </div>
@@ -71,7 +71,7 @@
 
       <div class="frow">
         <div class="lb">字体</div>
-        <div class="ctl"><select class="sinput" id="fontSel"></select></div>
+        <div class="ctl"><select class="sinput" id="fontSel" aria-label="界面字体"></select></div>
       </div>
     </section>
 
@@ -79,11 +79,32 @@
       <div class="sec-h">翻译</div>
 
       <div class="frow">
+        <div class="lb">翻译区域</div>
+        <div class="ctl">
+          <button class="tbtn" id="btnPickArea" type="button">重新框选</button>
+          <button class="tbtn" id="btnShot" type="button">测试截图</button>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="lb">翻译模式<span class="info" tabindex="0" role="note"
+             aria-label="AI 模型：要联网和 Key，译得准；本地词库：不联网，只能看关键词大意"
+             data-tip="AI 模型：要联网和 Key，译得准；本地词库：不联网，只能看关键词大意"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
+        <div class="ctl">
+          <div class="seg" id="engineSeg" role="group" aria-label="翻译模式">
+            <button type="button" data-eng="ai" class="on">AI 模型</button>
+            <button type="button" data-eng="local">本地词库</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="frow">
         <div class="lb">API Key<span class="info" tabindex="0" role="note"
-             data-tip="支持 DeepSeek（已实测）、OpenAI 等兼容接口，其余未测试"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
+             aria-label="支持 DeepSeek 等 OpenAI 兼容接口；仅 AI 模式需要"
+             data-tip="支持 DeepSeek 等 OpenAI 兼容接口；仅 AI 模式需要"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
         <div class="ctl">
           <div class="keywrap">
-            <input class="sinput" id="apiKey" type="password" autocomplete="off"
+            <input class="sinput" id="apiKey" type="password" autocomplete="off" aria-label="API Key"
                    spellcheck="false" placeholder="留空不修改">
             <button class="eye" id="eyeKey" title="显示 / 隐藏" type="button">
               <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor"
@@ -97,29 +118,10 @@
         </div>
       </div>
 
-      <div class="frow">
-        <div class="lb">翻译模式<span class="info" tabindex="0" role="note"
-             data-tip="离线模式不需要 API，但准确性较低且部分功能不可用"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
-        <div class="ctl">
-          <span class="seg" id="engSeg">
-            <button type="button" data-eng="offline">离线词库</button>
-            <button type="button" data-eng="ai">AI 模型</button>
-          </span>
-          <input type="checkbox" id="chkAI" hidden>
-        </div>
-      </div>
-
-      <div class="frow">
-        <div class="lb">翻译区域</div>
-        <div class="ctl">
-          <button class="tbtn" id="btnPickArea" type="button">重新框选</button>
-          <button class="tbtn" id="btnShot" type="button">测试截图</button>
-        </div>
-      </div>
-
       <div class="frow" id="shotRow" hidden style="display:block">
         <img id="shotPreview" alt="截图预览">
       </div>
+
     </section>
 
     <section class="sec" style="padding-bottom:12px">
@@ -139,6 +141,7 @@
   <footer class="foot">
     <span class="sstatus" id="sstatus"></span>
     <span class="spacer">
+      <button class="tbtn" id="btnCancel">取消</button>
       <button class="tbtn pri" id="btnSave">保存</button>
     </span>
   </footer>
