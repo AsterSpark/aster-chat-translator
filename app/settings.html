@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>设置 · Aster 聊天翻译</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="settings.css">
+</head>
+<body class="settings-body">
+
+<div class="win" id="settings">
+
+  <!-- 星点：只在标题带，压在内容之下（与弹窗同款） -->
+  <div class="sky" id="sky" aria-hidden="true">
+    <i style="left:6%;top:52%;animation-delay:-.6s"></i>
+    <i style="left:19%;top:20%;animation-delay:-1.9s"></i>
+    <i style="left:36%;top:62%;animation-delay:-3.2s"></i>
+    <i style="left:57%;top:24%;animation-delay:-2.5s"></i>
+    <i style="left:75%;top:56%;animation-delay:-4.1s"></i>
+    <i style="left:89%;top:18%;animation-delay:-1.2s"></i>
+    <b style="left:28%;top:40%;animation-delay:-2.8s"></b>
+    <b style="left:66%;top:46%;animation-delay:-1.5s"></b>
+  </div>
+
+  <header class="bar">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#star"/></svg>
+    <span class="bar-title">设置</span>
+    <span class="bar-actions">
+      <button class="icon" id="btnCloseSettings" title="关闭">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+          <path d="M2.4 2.4l9.2 9.2M11.6 2.4l-9.2 9.2"/>
+        </svg>
+      </button>
+    </span>
+  </header>
+
+  <div class="settings-scroll">
+
+    <section class="sec">
+      <div class="sec-h">系统</div>
+
+      <div class="frow">
+        <div class="lb">开机启动</div>
+        <div class="ctl">
+          <label class="switch">
+            <input type="checkbox" id="chkAuto">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="lb">游戏检测</div>
+        <div class="ctl">
+          <label class="switch">
+            <input type="checkbox" id="chkGame">
+            <span class="slider"></span>
+          </label>
+        </div>
+      </div>
+      <div class="frow">
+        <div class="lb">界面缩放</div>
+        <div class="ctl">
+          <span class="stepper">
+            <button class="stepbtn" id="scMinus" type="button" aria-label="减小">−</button>
+            <span class="val" id="scValue">100</span>
+            <button class="stepbtn" id="scPlus" type="button" aria-label="增大">+</button>
+          </span>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="lb">字体</div>
+        <div class="ctl"><select class="sinput" id="fontSel"></select></div>
+      </div>
+    </section>
+
+    <section class="sec">
+      <div class="sec-h">翻译</div>
+
+      <div class="frow">
+        <div class="lb">API Key<span class="info" tabindex="0" role="note"
+             data-tip="支持 DeepSeek（已实测）、OpenAI 等兼容接口，其余未测试"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
+        <div class="ctl">
+          <div class="keywrap">
+            <input class="sinput" id="apiKey" type="password" autocomplete="off"
+                   spellcheck="false" placeholder="留空不修改">
+            <button class="eye" id="eyeKey" title="显示 / 隐藏" type="button">
+              <svg width="15" height="15" viewBox="0 0 14 14" fill="none" stroke="currentColor"
+                   stroke-width="1.3" stroke-linejoin="round">
+                <path d="M1.1 7S3.3 3.5 7 3.5 12.9 7 12.9 7 10.7 10.5 7 10.5 1.1 7 1.1 7z"/>
+                <circle cx="7" cy="7" r="1.6"/>
+              </svg>
+            </button>
+          </div>
+          <button class="tbtn" id="clearKey" type="button">清除</button>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="lb">翻译模式<span class="info" tabindex="0" role="note"
+             data-tip="离线模式不需要 API，但准确性较低且部分功能不可用"><svg viewBox="0 0 12 12" aria-hidden="true"><circle cx="6" cy="2.7" r="1.15" fill="currentColor"/><rect x="4.85" y="4.9" width="2.3" height="5.4" rx="1.15" fill="currentColor"/></svg></span></div>
+        <div class="ctl">
+          <span class="seg" id="engSeg">
+            <button type="button" data-eng="offline">离线词库</button>
+            <button type="button" data-eng="ai">AI 模型</button>
+          </span>
+          <input type="checkbox" id="chkAI" hidden>
+        </div>
+      </div>
+
+      <div class="frow">
+        <div class="lb">翻译区域</div>
+        <div class="ctl">
+          <button class="tbtn" id="btnPickArea" type="button">重新框选</button>
+          <button class="tbtn" id="btnShot" type="button">测试截图</button>
+        </div>
+      </div>
+
+      <div class="frow" id="shotRow" hidden style="display:block">
+        <img id="shotPreview" alt="截图预览">
+      </div>
+    </section>
+
+    <section class="sec" style="padding-bottom:12px">
+      <div class="sec-h">快捷键</div>
+      <div class="frow">
+        <div class="lb">实时翻译</div>
+        <div class="ctl"><button class="keybox" id="keyTranslate" data-which="translate_key">小键盘 +</button></div>
+      </div>
+      <div class="frow">
+        <div class="lb">上次翻译</div>
+        <div class="ctl"><button class="keybox" id="keyLast" data-which="last_key">小键盘 −</button></div>
+      </div>
+    </section>
+
+  </div>
+
+  <footer class="foot">
+    <span class="sstatus" id="sstatus"></span>
+    <span class="spacer">
+      <button class="tbtn pri" id="btnSave">保存</button>
+    </span>
+  </footer>
+</div>
+
+<script src="icons.js"></script>
+
+<script src="common.js"></script>
+<script src="sky.js"></script>
+<script src="settings.js"></script>
+</body>
+</html>

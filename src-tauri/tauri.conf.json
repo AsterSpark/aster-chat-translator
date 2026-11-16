@@ -1,0 +1,108 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Aster 聊天翻译",
+  "version": "0.1.1",
+  "identifier": "com.aster.chattranslator",
+  "build": {
+    "frontendDist": "../app"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "popup",
+        "title": "Aster 聊天翻译",
+        "url": "index.html",
+        "width": 480,
+        "height": 700,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "center": true,
+        "visible": false
+      },
+      {
+        "label": "settings",
+        "title": "设置 · Aster 聊天翻译",
+        "url": "settings.html",
+        "width": 560,
+        "height": 520,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "center": true,
+        "visible": false
+      },
+      {
+        "label": "logs",
+        "title": "运行日志 · Aster 聊天翻译",
+        "url": "logs.html",
+        "width": 560,
+        "height": 560,
+        "resizable": true,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": false,
+        "shadow": false,
+        "center": true,
+        "visible": false
+      },
+      {
+        "label": "selector",
+        "title": "选择截图区域",
+        "url": "selector.html",
+        "fullscreen": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
+      },
+      {
+        "label": "toast",
+        "title": "翻译中",
+        "url": "toast.html",
+        "width": 420,
+        "height": 84,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "focus": false,
+        "shadow": false,
+        "visible": false
+      },
+      {
+        "label": "menu",
+        "title": "菜单",
+        "url": "menu.html",
+        "width": 246,
+        "height": 256,
+        "resizable": false,
+        "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
+        "skipTaskbar": true,
+        "shadow": false,
+        "visible": false
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: http://127.0.0.1:17650; connect-src 'self' ipc: http://ipc.localhost http://127.0.0.1:17650 ws://127.0.0.1:17651; font-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'"
+    }
+  },
+  "bundle": {
+    "active": false,
+    "icon": [
+      "icons/icon.ico"
+    ]
+  }
+}

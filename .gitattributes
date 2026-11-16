@@ -1,0 +1,16 @@
+# 统一换行符：仓库里存 LF，检出也用 LF
+# Windows 上 Git / Python / Rust / WebView2 都吃 LF，混着反而让 diff 失真
+# （改一次名字就变成"整个文件 1700 行全改"）。
+* text=auto eol=lf
+
+# 二进制：别让 git 碰
+*.png binary
+*.ico binary
+*.exe binary
+*.bin binary
+*.spm binary
+*.model binary
+
+# Windows 专用脚本保留 CRLF
+*.bat text eol=crlf
+*.cmd text eol=crlf

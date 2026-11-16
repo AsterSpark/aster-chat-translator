@@ -1,0 +1,61 @@
+/* 独立提示条窗口：只做「显示一句话，然后自己消失」 */
+
+html, body {
+  margin: 0;
+  padding: 0;
+  width: 420px;
+  height: 84px;
+  background: transparent;
+  overflow: hidden;
+  font-family: var(--font);
+  -webkit-font-smoothing: antialiased;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+/* 窗口里用绝对定位居中（flex 在透明无边框窗里会偏） */
+#pill {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  max-width: 400px;
+  margin: 0;
+}
+
+/* 底部进度：按 ms 缩短 */
+.prog {
+  position: absolute;
+  left: 16px;
+  right: 16px;
+  bottom: 0;
+  height: 1.5px;
+  border-radius: 2px;
+  background: linear-gradient(90deg, rgba(246, 207, 131, .95), rgba(246, 207, 131, .35));
+  transform-origin: left center;
+  display: none;
+}
+#pill.timed .prog { display: block; animation: progShrink linear forwards; }
+#pill.timed::after { opacity: .25; }
+
+@keyframes progShrink { from { transform: scaleX(1); } to { transform: scaleX(0); } }
+
+/* 常驻「翻译中」时星标呼吸 */
+#pill:not(.timed) .toast-star { animation: twinkle 1.6s ease-in-out infinite; }
+@keyframes twinkle {
+  0%, 100% { opacity: .55; }
+  50%      { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #pill:not(.timed) .toast-star { animation: none; }
+  #pill.timed .prog { animation: none; }
+}
+
+/* 按模式上色：AI = 金，离线 = 冷蓝（跟设置里的分段控件一致） */
+#pill[data-tone="ai"] .toast-text { color: var(--gold-1); }
+#pill[data-tone="ai"] .prog { background: linear-gradient(90deg, rgba(246,207,131,.95), rgba(246,207,131,.35)); }
+
+#pill[data-tone="offline"] .toast-text { color: #cfe2f8; }
+#pill[data-tone="offline"] .prog { background: linear-gradient(90deg, rgba(152,186,226,.95), rgba(152,186,226,.3)); }
+#pill[data-tone="offline"] .toast-star { color: #9dc0e8; }

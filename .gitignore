@@ -1,0 +1,45 @@
+# ============================================================
+# Aster 聊天翻译 · 忽略规则
+# 原则：能重新生成的、本机私有的、体积大的，一律不入库
+# ============================================================
+
+# ---------- Rust / Tauri（编译产物，几个 GB）----------
+src-tauri/target/
+src-tauri/gen/
+
+# 构建日志
+*.log
+
+# ---------- Python ----------
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# ---------- 打包产物（PyInstaller，随时可重建）----------
+build/
+dist/
+dist_app/
+dist-app/
+dist-release/
+
+# ---------- 本机运行时数据（不是源码）----------
+runtime.log
+runtime.1.log
+last_result.json
+last_result.baseline.json
+capture_preview.png
+logs/
+shots/
+tools/_cache/
+
+# ---------- 本地配置：含明文 API Key，绝不入库 ----------
+config.json
+
+# ---------- 离线模型权重（477 MB，随安装包分发，不进仓库）----------
+models/
+
+# ---------- 临时 / 编辑器 ----------
+*.png.bak
+_preview*.png
+.vscode/
+.idea/

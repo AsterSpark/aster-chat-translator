@@ -1,0 +1,48 @@
+/* 截图区域框选：全屏遮罩 + 拖拽选框（配色跟主界面同一套 token） */
+
+html, body {
+  margin: 0; padding: 0;
+  width: 100%; height: 100%;
+  background: rgba(6, 9, 14, .5);
+  overflow: hidden;
+  cursor: crosshair;
+  font-family: var(--font);
+  user-select: none;
+}
+
+.hint {
+  position: fixed;
+  top: 24px; left: 50%;
+  transform: translateX(-50%);
+  padding: 9px 18px;
+  background: rgba(14, 19, 28, .95);
+  border: 1px solid var(--line-2);
+  border-radius: var(--radius-pill);
+  color: var(--text-2);
+  font-size: 13px;
+  letter-spacing: .3px;
+  white-space: nowrap;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, .55);
+}
+.hint b { color: var(--gold-1); font-weight: 600; }
+
+.sel {
+  position: fixed;
+  border: 2px solid var(--gold);
+  background: rgba(246, 207, 131, .10);
+  box-shadow: 0 0 0 9999px rgba(6, 9, 14, .38);
+  pointer-events: none;
+}
+
+.size {
+  position: fixed;
+  padding: 4px 9px;
+  background: rgba(14, 19, 28, .95);
+  border: 1px solid var(--line-2);
+  border-radius: 7px;
+  color: var(--gold-1);
+  font-family: var(--font-en);
+  font-size: 12px;
+  pointer-events: none;
+  white-space: nowrap;
+}

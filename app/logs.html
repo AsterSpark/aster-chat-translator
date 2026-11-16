@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>运行日志 · Aster 聊天翻译</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="logs.css">
+</head>
+<body class="logs-body">
+
+<div class="win logs" id="logs">
+
+  <!-- 星点：只在标题带，压在内容之下 -->
+  <div class="sky" id="sky" aria-hidden="true">
+    <i style="left:5%;top:54%;animation-delay:-.9s"></i>
+    <i style="left:17%;top:22%;animation-delay:-2.2s"></i>
+    <i style="left:34%;top:60%;animation-delay:-3.6s"></i>
+    <i style="left:55%;top:26%;animation-delay:-1.4s"></i>
+    <i style="left:73%;top:58%;animation-delay:-4.4s"></i>
+    <i style="left:88%;top:20%;animation-delay:-2.9s"></i>
+    <b style="left:26%;top:42%;animation-delay:-1.7s"></b>
+    <b style="left:64%;top:44%;animation-delay:-3.9s"></b>
+  </div>
+
+  <header class="bar">
+    <svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><use href="#star"/></svg>
+    <span class="bar-title">运行日志</span>
+    <span class="bar-actions">
+      <button class="icon" id="btnClose" title="关闭">
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round">
+          <path d="M2.4 2.4l9.2 9.2M11.6 2.4l-9.2 9.2"/>
+        </svg>
+      </button>
+    </span>
+  </header>
+
+  <div class="tools">
+    <button class="tchip on" data-f="all">全部</button>
+    <button class="tchip" data-f="warn">警告</button>
+    <button class="tchip" data-f="err">错误</button>
+    <span class="sp">
+      <button class="tbtn mini" id="btnCopy">复制</button>
+      <button class="tbtn mini" id="btnClear">清空</button>
+      <button class="tbtn mini" id="btnOpen">打开文件</button>
+    </span>
+  </div>
+
+  <div class="loglist" id="logbox"></div>
+
+  <div class="logfoot">
+    <span id="count">共 0 条</span>
+    <span class="dot-sep">·</span>
+    <span>runtime.log · 512 KB 轮转</span>
+    <label class="follow">
+      <input type="checkbox" id="chkFollow" checked>
+      自动跟随
+    </label>
+  </div>
+</div>
+
+<script src="icons.js"></script>
+
+<script src="common.js"></script>
+<script src="sky.js"></script>
+<script src="logs.js"></script>
+</body>
+</html>

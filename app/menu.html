@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>菜单</title>
+<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="menu.css">
+</head>
+<body class="menu-body">
+
+<div class="menu" id="menu">
+  <div class="mstat" id="mStat">本次 —</div>
+
+  <button class="mi" id="mTranslate">
+    <svg viewBox="0 0 24 24" aria-hidden="true"><use href="#star"/></svg>
+    立即翻译一次<span class="k">num +</span>
+  </button>
+
+  <button class="mi" id="mLast">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <circle cx="12" cy="12" r="8"/><path d="M12 7.5V12l3 2"/>
+    </svg>
+    上次翻译<span class="k">num −</span>
+  </button>
+
+  <div class="msep"></div>
+
+  <button class="mi" id="mLogs">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>
+    </svg>
+    打开运行日志
+  </button>
+
+  <button class="mi" id="mSettings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <circle cx="12" cy="12" r="4.1"/>
+    </svg>
+    设置…
+  </button>
+
+  <div class="msep"></div>
+
+  <button class="mi danger" id="mQuit">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true">
+      <path d="M12 4v8"/><path d="M7.5 7a7 7 0 1 0 9 0"/>
+    </svg>
+    退出助手
+  </button>
+
+</div>
+
+<script src="icons.js"></script>
+
+<script src="common.js"></script>
+<script src="menu.js"></script>
+</body>
+</html>
